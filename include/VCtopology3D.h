@@ -134,6 +134,9 @@ public:
   int getPeriods(int dir)const{ return (periods[dir]); }
   MPI_Comm getFieldComm()const{ return (CART_COMM); }
   MPI_Comm getParticleComm()const{ return (CART_COMM_P); }
+  MPI_Comm getParticleXComm()const{ return (PARTICLE_X_COMM); }
+  MPI_Comm getParticleYComm()const{ return (PARTICLE_Y_COMM); }
+  MPI_Comm getParticleZComm()const{ return (PARTICLE_Z_COMM); }
 
 
 private:
@@ -141,6 +144,10 @@ private:
   MPI_Comm CART_COMM;
   /** New communicator with virtual cartesian topology for Particles*/
   MPI_Comm CART_COMM_P;
+  /** One-dimensional particle communicators for each Cartesian direction */
+  MPI_Comm PARTICLE_X_COMM;
+  MPI_Comm PARTICLE_Y_COMM;
+  MPI_Comm PARTICLE_Z_COMM;
   /** MPI status during sending and receiving communication */
   MPI_Status status;
   /** Direction X for shift MPI_Cart_Shift*/

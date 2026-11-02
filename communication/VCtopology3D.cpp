@@ -31,6 +31,11 @@ using std::endl;
 
 /** DEFINE THE Topology HERE, setting XLEN,YLEN,ZLEN */
 VCtopology3D::VCtopology3D(const Collective& col) {
+  CART_COMM = MPI_COMM_NULL;
+  CART_COMM_P = MPI_COMM_NULL;
+  PARTICLE_X_COMM = MPI_COMM_NULL;
+  PARTICLE_Y_COMM = MPI_COMM_NULL;
+  PARTICLE_Z_COMM = MPI_COMM_NULL;
   // *******************************************
   // *******************************************
   // change these values to change the topology
@@ -120,6 +125,15 @@ void VCtopology3D::setup_vctopology(MPI_Comm old_comm) {
       MPI_Cart_shift(CART_COMM_P, XDIR, RIGHT, &xleft_neighbor_P, &xright_neighbor_P);
       MPI_Cart_shift(CART_COMM_P, YDIR, RIGHT, &yleft_neighbor_P, &yright_neighbor_P);
       MPI_Cart_shift(CART_COMM_P, ZDIR, RIGHT, &zleft_neighbor_P, &zright_neighbor_P);
+
+      int remain_dims[3] = {1, 0, 0};
+      MPI_Cart_sub(CART_COMM_P, remain_dims, &PARTICLE_X_COMM);
+      remain_dims[0] = 0;
+      remain_dims[1] = 1;
+      MPI_Cart_sub(CART_COMM_P, remain_dims, &PARTICLE_Y_COMM);
+      remain_dims[1] = 0;
+      remain_dims[2] = 1;
+      MPI_Cart_sub(CART_COMM_P, remain_dims, &PARTICLE_Z_COMM);
   }
 
   _isPeriodicXlower_P = PERIODICX_P && (coordinates[0]==0);
@@ -147,7 +161,11 @@ void VCtopology3D::setup_vctopology(MPI_Comm old_comm) {
 }
 /** destructor */
 VCtopology3D::~VCtopology3D() {
-
+  if (PARTICLE_X_COMM != MPI_COMM_NULL) MPI_Comm_free(&PARTICLE_X_COMM);
+  if (PARTICLE_Y_COMM != MPI_COMM_NULL) MPI_Comm_free(&PARTICLE_Y_COMM);
+  if (PARTICLE_Z_COMM != MPI_COMM_NULL) MPI_Comm_free(&PARTICLE_Z_COMM);
+  if (CART_COMM_P != MPI_COMM_NULL) MPI_Comm_free(&CART_COMM_P);
+  if (CART_COMM != MPI_COMM_NULL) MPI_Comm_free(&CART_COMM);
 }
 /** print topology info */
 void VCtopology3D::Print() {
