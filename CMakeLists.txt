@@ -76,7 +76,7 @@ if (USE_HDF5)
   find_package(HDF5 COMPONENTS C HL REQUIRED)
 
 
-  if (NOT DEFINED HDF5_C_TARGET)
+  if (NOT TARGET hdf5::hdf5)
     message(STATUS "Creating a proper target for HDF5")
     add_library(hdf5::hdf5 INTERFACE IMPORTED)
     set_target_properties(hdf5::hdf5 PROPERTIES
@@ -84,17 +84,17 @@ if (USE_HDF5)
       INTERFACE_INCLUDE_DIRECTORIES "${HDF5_C_INCLUDE_DIRS}"
       INTERFACE_LINK_LIBRARIES "${HDF5_C_LIBRARIES}"
       )
-    set(HDF5_C_TARGET hdf5::hdf5)
   endif()
+  set(HDF5_C_TARGET hdf5::hdf5)
 
-  if (NOT DEFINED HDF5_C_HL_TARGET)
+  if (NOT TARGET hdf5::hdf5_hl)
     message(STATUS "Creating a proper target for HDF5 HL")
     add_library(hdf5::hdf5_hl INTERFACE IMPORTED)
     set_target_properties(hdf5::hdf5_hl PROPERTIES
       INTERFACE_LINK_LIBRARIES "hdf5::hdf5;${HDF5_C_HL_LIBRARIES}"
       )
-    set(HDF5_C_HL_TARGET hdf5::hdf5_hl)
   endif()
+  set(HDF5_C_HL_TARGET hdf5::hdf5_hl)
 endif()
 
 # Find MPI
@@ -113,6 +113,7 @@ file(
   fields/*.cpp
   grids/*.cpp
   inputoutput/*.cpp
+  restart/*.cpp
   mathlib/*.cpp
   mpidata/*.cpp
   particles/*.cpp
@@ -132,6 +133,13 @@ target_include_directories(
   iPIC3Dlib
   PUBLIC include
   )
+
+if (USE_HDF5)
+  target_include_directories(iPIC3Dlib SYSTEM PRIVATE ${HDF5_C_INCLUDE_DIRS})
+  if (HDF5_IS_PARALLEL)
+    target_compile_definitions(iPIC3Dlib PUBLIC PHDF5)
+  endif()
+endif()
 
 #
 # Link external libraries

@@ -28,6 +28,7 @@ developers: Stefano Markidis, Giovanni Lapenta.
 #include <iostream>
 #include <math.h>
 #include <limits.h>
+#include <vector>
 #include "asserts.h"
 #include <algorithm> // for swap, std::max
 #include "VCtopology3D.h"
@@ -716,7 +717,7 @@ bool Particles3Dcomm::test_all_pcls_are_in_subdomain()
     // should vectorize these comparisons
     bool not_in_subdomain = 
          pcl.get_x() < xstart || pcl.get_y() < ystart || pcl.get_z() < zstart
-      || pcl.get_x() > xend   || pcl.get_y() > yend   || pcl.get_z() > yend;
+      || pcl.get_x() > xend   || pcl.get_y() > yend   || pcl.get_z() > zend;
     if(__builtin_expect(not_in_subdomain, false)) return false;
   }
   return true; // all pcls are in processor subdomain
@@ -1499,6 +1500,102 @@ void Particles3Dcomm::communicate_particles()
   recommunicate_particles_until_done(1);
 }
 
+void Particles3Dcomm::redistribute_dimension(
+  int dimension, MPI_Comm row_comm, int row_length)
+{
+  assert_ge(dimension, 0);
+  assert_lt(dimension, 3);
+  assert_gt(row_length, 0);
+
+  std::vector<int> send_counts(row_length, 0);
+  for(int pidx=0; pidx<_pcls.size(); pidx++)
+  {
+    const SpeciesParticle& pcl = _pcls[pidx];
+    const double position =
+      dimension == 0 ? pcl.get_x() :
+      dimension == 1 ? pcl.get_y() : pcl.get_z();
+    const double length =
+      dimension == 0 ? Lx :
+      dimension == 1 ? Ly : Lz;
+    int destination = static_cast<int>(floor(position / length * row_length));
+    if(destination < 0) destination = 0;
+    if(destination >= row_length) destination = row_length - 1;
+    send_counts[destination]++;
+  }
+
+  std::vector<int> recv_counts(row_length, 0);
+  MPI_Alltoall(&send_counts[0], 1, MPI_INT,
+    &recv_counts[0], 1, MPI_INT, row_comm);
+
+  std::vector<int> send_displacements(row_length, 0);
+  std::vector<int> recv_displacements(row_length, 0);
+  int total_send = 0;
+  int total_recv = 0;
+  for(int rank=0; rank<row_length; rank++)
+  {
+    send_displacements[rank] = total_send;
+    recv_displacements[rank] = total_recv;
+    total_send += send_counts[rank];
+    total_recv += recv_counts[rank];
+  }
+
+  vector_SpeciesParticle send_particles;
+  vector_SpeciesParticle recv_particles;
+  send_particles.resize(total_send);
+  recv_particles.resize(total_recv);
+
+  std::vector<int> next_send = send_displacements;
+  for(int pidx=0; pidx<_pcls.size(); pidx++)
+  {
+    const SpeciesParticle& pcl = _pcls[pidx];
+    const double position =
+      dimension == 0 ? pcl.get_x() :
+      dimension == 1 ? pcl.get_y() : pcl.get_z();
+    const double length =
+      dimension == 0 ? Lx :
+      dimension == 1 ? Ly : Lz;
+    int destination = static_cast<int>(floor(position / length * row_length));
+    if(destination < 0) destination = 0;
+    if(destination >= row_length) destination = row_length - 1;
+    send_particles[next_send[destination]++] = pcl;
+  }
+
+  const int particle_size = sizeof(SpeciesParticle);
+  std::vector<int> send_bytes(row_length);
+  std::vector<int> recv_bytes(row_length);
+  std::vector<int> send_byte_displacements(row_length);
+  std::vector<int> recv_byte_displacements(row_length);
+  for(int rank=0; rank<row_length; rank++)
+  {
+    send_bytes[rank] = send_counts[rank] * particle_size;
+    recv_bytes[rank] = recv_counts[rank] * particle_size;
+    send_byte_displacements[rank] = send_displacements[rank] * particle_size;
+    recv_byte_displacements[rank] = recv_displacements[rank] * particle_size;
+  }
+
+  MPI_Alltoallv(
+    total_send ? static_cast<void*>(&send_particles[0]) : NULL,
+    &send_bytes[0], &send_byte_displacements[0], MPI_BYTE,
+    total_recv ? static_cast<void*>(&recv_particles[0]) : NULL,
+    &recv_bytes[0], &recv_byte_displacements[0], MPI_BYTE,
+    row_comm);
+
+  _pcls.swap(recv_particles);
+}
+
+void Particles3Dcomm::redistribute_particles_by_dimension()
+{
+  convertParticlesToAoS();
+  apply_periodic_BC_global(_pcls, 0);
+  apply_BCs_globally(_pcls);
+
+  redistribute_dimension(0, vct->getParticleXComm(), vct->getXLEN());
+  redistribute_dimension(1, vct->getParticleYComm(), vct->getYLEN());
+  redistribute_dimension(2, vct->getParticleZComm(), vct->getZLEN());
+
+  assert(test_all_pcls_are_in_subdomain());
+}
+
 /** return the Kinetic energy */
 double Particles3Dcomm::getKe() {
   double localKe = 0.0;
@@ -2004,4 +2101,3 @@ void Particles3Dcomm::convertParticlesToSoA()
   }
   particleType = ParticleType::SoA;
 }
-

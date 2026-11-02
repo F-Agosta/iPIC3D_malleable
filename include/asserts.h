@@ -40,6 +40,9 @@
 // (a list of what we currently actually support;
 // other stuff below is experimental)
 
+void eprintf_fileLine(FILE * fptr, const char *type, const char *func,
+  const char *file, int line_number, const char *format, ...);
+
 #define assert1(e) ((void)0)
 #define assert2(e) ((void)0)
 #define assert3(e) ((void)0)
@@ -55,6 +58,7 @@
 #define assert_ge(a,b) ((void)0)
 #define assert_le(a,b) ((void)0)
 #define assert_isnum(a) ((void)0)
+#define builtin_expect(a,b) (a)
 
 #else // ifndef NDEBUG
 

@@ -36,6 +36,7 @@
 #include "VCtopology3D.h"
 #include "Grid3DCU.h"
 #include "aligned_vector.h"
+#include "RestartState.h"
 
 class ConfigFile;
 using namespace std;
@@ -66,13 +67,27 @@ class Collective
     /*! read input file */
     void ReadInput(string inputfile);
     /*! read the restart input file from HDF5 */
-    int ReadRestart(string inputfile);
+    int ReadRestart(string inputfile); // this method isn't actually called
 
-    void read_field_restart(const VCtopology3D* vct,const Grid* grid,arr3_double Bxn, arr3_double Byn, arr3_double Bzn,
-    						arr3_double Ex, arr3_double Ey, arr3_double Ez,array4_double* rhons_, int ns)const;
+    /*! Read the topology of the previous simulation (delegates to RestartState). */
+    int read_old_topology(string inputfile);
+    /*! Check that the new topology is compatible with the old one (delegates to RestartState). */
+    int check_restart_validity();
 
-    void read_particles_restart(const VCtopology3D* vct,int species_number,vector_double& u,vector_double& v,vector_double& w,
-    							vector_double& q,vector_double& x,vector_double& y,vector_double& z,vector_double& t)const;
+    /*! Read electromagnetic fields from the restart file (delegates to RestartState). */
+    void read_field_restart(const VCtopology3D* vct, const Grid* grid,
+                            arr3_double Bxn, arr3_double Byn, arr3_double Bzn,
+                            arr3_double Ex,  arr3_double Ey,  arr3_double Ez,
+                            array4_double* rhons_, int ns) const;
+
+    /*! Read particle data from the restart file (delegates to RestartState). */
+    void read_particles_restart(const VCtopology3D* vct, int species_number,
+                                vector_double& u, vector_double& v, vector_double& w,
+                                vector_double& q, vector_double& x, vector_double& y,
+                                vector_double& z, vector_double& t) const;
+
+    /*! Access the RestartState object (e.g. to call setup_coords after topology is ready). */
+    //RestartState& getRestartState() { return restartState_; }
 
     void init_derived_parameters();
     /*! Print physical parameters */
@@ -96,6 +111,10 @@ class Collective
     int getXLEN()const{ return (XLEN); }
     int getYLEN()const{ return (YLEN); }
     int getZLEN()const{ return (ZLEN); }
+    int getXLENprev()const{ return restartState_->get_XLEN_prev(); }
+    int getYLENprev()const{ return restartState_->get_YLEN_prev(); }
+    int getZLENprev()const{ return restartState_->get_ZLEN_prev(); }
+    //const RestartState& getRestartState() const { return restartState_; }
     bool getPERIODICX()const{ return (PERIODICX); }
     bool getPERIODICY()const{ return (PERIODICY); }
     bool getPERIODICZ()const{ return (PERIODICZ); }
@@ -168,6 +187,7 @@ class Collective
     int getRestart_status()const{ return (restart_status); }
     string getSaveDirName()const{ return (SaveDirName); }
     string getRestartDirName()const{ return (RestartDirName); }
+    string getRestartSaveDirName()const{ return (RestartSaveDirName); }
     string getinputfile()const{ return (inputfile); }
     string getCase()const{ return (Case); }
     string getSimName()const{ return (SimName); }
@@ -323,6 +343,8 @@ class Collective
     string SaveDirName;
     /*! RestartDirName */
     string RestartDirName;
+    /*! RestartSaveDirName */
+    string RestartSaveDirName;
     /*! restart_status 0 --> no restart; 1--> restart, create new; 2--> restart, append; */
     int restart_status;
     /*! last cycle */
@@ -387,6 +409,10 @@ class Collective
     //bool verbose;
     /*! RESTART */
     bool RESTART1;
+
+    /*! Encapsulates all restart I/O logic: topology reading, validation,
+     *  field and particle reading from checkpoint files. */
+    std::unique_ptr<RestartState> restartState_;
 
     /*! velocity of the injection from the wall */
     double Vinj;

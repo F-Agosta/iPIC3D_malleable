@@ -33,8 +33,14 @@ int main(int argc, char **argv) {
  {
   iPic3D::c_Solver KCode;
   KCode.Init(argc, argv);
-
+  // Reset timing before any particle communication (RedistributeParticles
+  // calls communicate_particles which uses the TimeTasks machinery).
   timeTasks.resetCycle();
+  // After Init(), if this is a restart with a different number of processes,
+  // redistribute particles to the correct subdomains before the first cycle.
+  KCode.RedistributeParticles();
+
+
   KCode.CalculateMoments();
   for (int i = KCode.FirstCycle(); i < KCode.LastCycle(); i++) {
 

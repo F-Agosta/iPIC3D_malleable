@@ -32,9 +32,10 @@
 Grid3DCU::Grid3DCU(CollectiveIO * col, VirtualTopology3D * vct):
   _vct(*vct)
 {
-  assert_le(col->getXLEN(),col->getNxc());
-  assert_le(col->getYLEN(),col->getNyc());
-  assert_le(col->getZLEN(),col->getNzc());
+  // XLEN should be less than the number of cells 
+  assert_le(col->getXLEN(),col->getNxc()); //
+  assert_le(col->getYLEN(),col->getNyc()); //
+  assert_le(col->getZLEN(),col->getNzc()); //
 
   // get number of cells restricted to regular (untruncated) subdomain
   const int nxc_rr = ceiling_of_ratio(col->getNxc(), col->getXLEN());
@@ -45,6 +46,7 @@ Grid3DCU::Grid3DCU(CollectiveIO * col, VirtualTopology3D * vct):
   nyc_r = nyc_rr;
   nzc_r = nzc_rr;
 
+  // total number of cells in untruncated subdomains
   num_cells_rr = nxc_rr*nyc_rr*nzc_rr;
 
   // Truncate the number of cells appropriately in the upper process.

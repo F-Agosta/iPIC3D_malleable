@@ -110,6 +110,9 @@ int c_Solver::Init(int argc, char **argv) {
   // initialize the virtual cartesian topology
   vct = new VCtopology3D(*col);
   // Check if we can map the processes into a matrix ordering defined in Collective.cpp
+  // This check should stay at the moment:
+  // If we change the number of processes it still has to satify the number of domain existing
+  // and specified in the input file
   if (nprocs != vct->getNprocs()) {
     if (myrank == 0) {
       cerr << "Error: " << nprocs << " processes cant be mapped into " << vct->getXLEN() << "x" << vct->getYLEN() << "x" << vct->getZLEN() << " matrix: Change XLEN,YLEN, ZLEN in method VCtopology3D.init()" << endl;
@@ -343,6 +346,26 @@ void c_Solver::CalculateB() {
   timeTasks_set_main_task(TimeTasks::FIELDS);
   // calculate the B field
   EMf->calculateB();
+}
+
+void c_Solver::RedistributeParticles()
+{
+  // Only needed when restarting with a different (larger) topology.
+  // For a fresh run or a same-topology restart the particles are already
+  // placed correctly, so skip the expensive communication.
+  if (restart_status == 0) return;
+  if (col->getXLENprev() == col->getXLEN() &&
+       col->getYLENprev() == col->getYLEN() &&
+       col->getZLENprev() == col->getZLEN()) return;
+
+   timeTasks_set_main_task(TimeTasks::PARTICLES);
+   pad_particle_capacities();
+   for (int i = 0; i < ns; i++) {
+     part[i].redistribute_particles_by_dimension();
+   }
+   for (int i = 0; i < nstestpart; i++) {
+     testpart[i].redistribute_particles_by_dimension();
+   }
 }
 
 /*  -------------- */

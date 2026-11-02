@@ -24,6 +24,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <vector>
+#include <iomanip>
 #include "input_array.h"
 #include "ipichdf5.h"
 #include "Collective.h"
@@ -103,6 +104,7 @@ void Collective::ReadInput(string inputfile) {
 
     SaveDirName = config.read < string > ("SaveDirName","data");
     RestartDirName = config.read < string > ("RestartDirName","data");
+    RestartSaveDirName = config.read < string > ("RestartSaveDirName", RestartDirName);
     ns = config.read < int >("ns");
     nstestpart = config.read < int >("nsTestPart", 0);
     NpMaxNpRatio = config.read < double >("NpMaxNpRatio",1.5);
@@ -473,19 +475,46 @@ void Collective::ReadInput(string inputfile) {
 
 #ifndef NO_HDF5 
   if (RESTART1) {               // you are restarting
+    //this function is to fix
     RestartDirName = config.read < string > ("RestartDirName","data");
-    //ReadRestart(RestartDirName);
-    restart_status = 1;
-    hid_t file_id = H5Fopen((RestartDirName + "/restart0.hdf").c_str(), H5F_ACC_RDWR, H5P_DEFAULT);
-    if (file_id < 0) {
-      cout << "couldn't open file: " << inputfile << endl;
-      return;
-    }
+    RestartSaveDirName = config.read < string > ("RestartSaveDirName", RestartDirName);
+    restartState_ = std::make_unique<RestartState>(RestartDirName);
 
-    hid_t dataset_id = H5Dopen2(file_id, "/last_cycle", H5P_DEFAULT);  // HDF 1.8.8
-    herr_t status = H5Dread(dataset_id, H5T_NATIVE_INT, H5S_ALL, H5S_ALL, H5P_DEFAULT, &last_cycle);
-    status = H5Dclose(dataset_id);
-    status = H5Fclose(file_id);
+    if (restartState_->read_old_topology() == -1) {
+      eprintf("Unable to read restart metadata from %s/settings.hdf\n",
+              RestartDirName.c_str());
+      MPIdata::exit(1);
+    };
+
+    if (restartState_->validate_new_topology(XLEN, YLEN, ZLEN) == -1) {
+      eprintf("Invalid restart topology: source is %dx%dx%d, requested is %dx%dx%d\n",
+              restartState_->get_XLEN_prev(), restartState_->get_YLEN_prev(),
+              restartState_->get_ZLEN_prev(), XLEN, YLEN, ZLEN);
+      MPIdata::exit(1);
+    }
+    restart_status = 1;
+    last_cycle = restartState_->read_last_cycle();
+
+
+    // This part of the code checks if the restart file actually exists
+    // at the moment it is not needed.
+    // string restart0 = RestartDirName + "/restart_x000_y000_z000.hdf";
+    // hid_t file_id = H5Fopen(restart0.c_str(), H5F_ACC_RDONLY, H5P_DEFAULT);
+    // if (file_id < 0) {
+    //   restart0 = RestartDirName + "/restart0.hdf";
+    //   file_id = H5Fopen(restart0.c_str(), H5F_ACC_RDONLY, H5P_DEFAULT);
+    // }
+    // if (file_id >= 0) {
+    //   herr_t status;
+    //   hid_t dataset_id = H5Dopen2(file_id, "/last_cycle", H5P_DEFAULT);
+    //   if (dataset_id >= 0) {
+    //     status = H5Dread(dataset_id, H5T_NATIVE_INT, H5S_ALL, H5S_ALL, H5P_DEFAULT, &last_cycle);
+    //     status = H5Dclose(dataset_id);
+    //   }
+    //   status = H5Fclose(file_id);
+    // } else {
+    //   cout << "couldn't open restart file for last_cycle: " << restart0 << endl;
+    // }
   }
 #endif
 
@@ -529,12 +558,12 @@ int Collective::ReadRestart(string inputfile) {
   eprintf("restart requires compiling with HDF5");
 #else
   restart_status = 1;
-  // hdf stuff 
+  // hdf stuff
   hid_t file_id;
   hid_t dataset_id;
   herr_t status;
   // Open the setting file for the restart.
-  file_id = H5Fopen((inputfile + "/settings.hdf").c_str(), H5F_ACC_RDWR, H5P_DEFAULT);
+  file_id = H5Fopen((inputfile + "/settings.hdf").c_str(), H5F_ACC_RDONLY, H5P_DEFAULT);
   if (file_id < 0) {
     cout << "couldn't open file: " << inputfile << endl;
     return -1;
@@ -805,7 +834,7 @@ int Collective::ReadRestart(string inputfile) {
 
   // read last cycle (not from settings, but from restart0.hdf)
 
-  file_id = H5Fopen((inputfile + "/restart0.hdf").c_str(), H5F_ACC_RDWR, H5P_DEFAULT);
+  file_id = H5Fopen((inputfile + "/restart0.hdf").c_str(), H5F_ACC_RDONLY, H5P_DEFAULT);
   if (file_id < 0) {
     cout << "couldn't open file: " << inputfile << endl;
     return -1;
@@ -833,280 +862,259 @@ void Collective::read_field_restart(
 #ifdef NO_HDF5
   eprintf("Require HDF5 to read from restart file.");
 #else
-    const int nxn = grid->getNXN();
-    const int nyn = grid->getNYN();
-    const int nzn = grid->getNZN();
-    if (vct->getCartesian_rank() == 0)
-    {
-      printf("LOADING EM FIELD FROM RESTART FILE in %s/restart.hdf\n",getRestartDirName().c_str());
-    }
+  restartState_->read_field_restart(vct, grid, 
+                                    Bxn, Byn, Bzn, 
+                                    Ex, Ey, Ez, 
+                                    rhons_, ns);
+    // const int nxn = grid->getNXN();
+    // const int nyn = grid->getNYN();
+    // const int nzn = grid->getNZN();
+    
+    // if (vct->getCartesian_rank() == 0) {
+    //   printf("LOADING EM FIELD FROM RESTART FILE in %s/restart.hdf\n", getRestartDirName().c_str());
+    // }
 
-    stringstream ss;
-    ss << vct->getCartesian_rank();
-    string name_file = getRestartDirName() + "/restart" + ss.str() + ".hdf";
+    // restartState_.setup_coords(vct);
 
-    // hdf stuff
-    hid_t file_id, dataspace;
-    hid_t datatype, dataset_id;
-    herr_t status;
-    size_t size;
-    hsize_t dims_out[3];        /* dataset dimensions */
-    int status_n;
+    // // 1. File & Internal Coordinates Setup
+    // int file_coord[3] = {
+    //     vct->getCoordinates(0) / x_fact,
+    //     vct->getCoordinates(1) / y_fact,
+    //     vct->getCoordinates(2) / z_fact
+    // };
+    // int internal_coord[3] = {
+    //     vct->getCoordinates(0) % x_fact,
+    //     vct->getCoordinates(1) % y_fact,
+    //     vct->getCoordinates(2) % z_fact
+    // };
 
-    // open the hdf file
-    file_id = H5Fopen(name_file.c_str(), H5F_ACC_RDWR, H5P_DEFAULT);
-    if (file_id < 0) {
-      eprintf("Failed to open file: %s\n ", name_file.c_str());
-    }
+    // stringstream restart_name;
+    // restart_name << RestartDirName << "/restart_x"
+    //              << setw(3) << setfill('0') << file_coord[0] << "_y"
+    //              << setw(3) << setfill('0') << file_coord[1] << "_z"
+    //              << setw(3) << setfill('0') << file_coord[2] << ".hdf";
+    // string name_file = restart_name.str();
 
-    //find the last cycle
-    int lastcycle=0;
-    dataset_id = H5Dopen2(file_id, "/last_cycle", H5P_DEFAULT); // HDF 1.8.8
-    status = H5Dread(dataset_id, H5T_NATIVE_INT, H5S_ALL, H5S_ALL, H5P_DEFAULT, &lastcycle);
-    status = H5Dclose(dataset_id);
+    // // 2. Open File and Get Last Cycle
+    // hid_t file_id = H5Fopen(name_file.c_str(), H5F_ACC_RDONLY, H5P_DEFAULT);
+    // if (file_id < 0) {
+    //   eprintf("Failed to open file: %s\n", name_file.c_str());
+    // }
 
-    // Bxn
-    ss.str("");ss << "/fields/Bx/cycle_" << lastcycle;
-    dataset_id = H5Dopen2(file_id, ss.str().c_str(), H5P_DEFAULT); // HDF 1.8.8
-    datatype = H5Dget_type(dataset_id);
-    size = H5Tget_size(datatype);
-    dataspace = H5Dget_space(dataset_id);
-    status_n = H5Sget_simple_extent_dims(dataspace, dims_out, NULL);
+    // int lastcycle = 0;
+    // hid_t dataset_id = H5Dopen2(file_id, "/last_cycle", H5P_DEFAULT);
+    // H5Dread(dataset_id, H5T_NATIVE_INT, H5S_ALL, H5S_ALL, H5P_DEFAULT, &lastcycle);
+    // H5Dclose(dataset_id);
 
-    std::vector<double> temp_storage(dims_out[0] * dims_out[1] * dims_out[2]);
-    status = H5Dread(dataset_id, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, temp_storage.data());
-    int k = 0;
-    for (int i = 1; i < nxn - 1; i++)
-      for (int j = 1; j < nyn - 1; j++)
-        for (int jj = 1; jj < nzn - 1; jj++)
-          Bxn[i][j][jj] = temp_storage[k++];
+    // // 3. Grid Math & Shared Dataspace Initialization (Using Bx)
+    // stringstream ss;
+    // ss << "/fields/Bx/cycle_" << lastcycle;
+    // dataset_id = H5Dopen2(file_id, ss.str().c_str(), H5P_DEFAULT);
+    // hid_t shared_dataspace = H5Dget_space(dataset_id);
+    
+    // hsize_t dims_out[3];
+    // H5Sget_simple_extent_dims(shared_dataspace, dims_out, NULL);
 
+    // hsize_t new_cells[3] = {
+    //   (dims_out[0] - 1) / x_fact, 
+    //   (dims_out[1] - 1) / y_fact, 
+    //   (dims_out[2] - 1) / z_fact
+    // };
+    
+    // hsize_t curr_dims[3] = { new_cells[0] + 1, new_cells[1] + 1, new_cells[2] + 1 };
+    // hsize_t offset[3] = {
+    //   internal_coord[0] * new_cells[0], 
+    //   internal_coord[1] * new_cells[1], 
+    //   internal_coord[2] * new_cells[2]
+    // };
 
-    status = H5Dclose(dataset_id);
+    // // Allocate memory and setup hyperslab for ALL fields
+    // std::vector<double> temp_storage(curr_dims[0] * curr_dims[1] * curr_dims[2]);
+    // H5Sselect_hyperslab(shared_dataspace, H5S_SELECT_SET, offset, NULL, curr_dims, NULL);
+    // hid_t memspace_id = H5Screate_simple(3, curr_dims, NULL);
 
-    // Byn
-    ss.str("");ss << "/fields/By/cycle_" << lastcycle;
-    dataset_id = H5Dopen2(file_id, ss.str().c_str(), H5P_DEFAULT); // HDF 1.8.8
-    status = H5Dread(dataset_id, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, temp_storage.data());
-    k = 0;
-    for (int i = 1; i < nxn - 1; i++)
-      for (int j = 1; j < nyn - 1; j++)
-        for (int jj = 1; jj < nzn - 1; jj++)
-          Byn[i][j][jj] = temp_storage[k++];
+    // // 4. Lambda helper to eliminate repetitive read/map code
+    // auto read_and_map = [&](const string& path, arr3_double arr) {
+    //     hid_t d_id = H5Dopen2(file_id, path.c_str(), H5P_DEFAULT);
+    //     H5Dread(d_id, H5T_NATIVE_DOUBLE, memspace_id, shared_dataspace, H5P_DEFAULT, temp_storage.data());
+    //     int k = 0;
+    //     for (int i = 1; i < nxn - 1; i++) {
+    //         for (int j = 1; j < nyn - 1; j++) {
+    //             for (int jj = 1; jj < nzn - 1; jj++) {
+    //                 arr[i][j][jj] = temp_storage[k++];
+    //             }
+    //         }
+    //     }
+    //     H5Dclose(d_id);
+    // };
 
-    status = H5Dclose(dataset_id);
+    // // 5. Execute Reads
+    // // Bx was already opened to get dims, so read it and close it first
+    // H5Dread(dataset_id, H5T_NATIVE_DOUBLE, memspace_id, shared_dataspace, H5P_DEFAULT, temp_storage.data());
+    // int k = 0;
+    // for (int i = 1; i < nxn - 1; i++)
+    //     for (int j = 1; j < nyn - 1; j++)
+    //         for (int jj = 1; jj < nzn - 1; jj++)
+    //             Bxn[i][j][jj] = temp_storage[k++];
+    // H5Dclose(dataset_id);
 
+    // // Read remaining fields cleanly using the lambda
+    // ss.str(""); ss << "/fields/By/cycle_" << lastcycle; read_and_map(ss.str(), Byn);
+    // ss.str(""); ss << "/fields/Bz/cycle_" << lastcycle; read_and_map(ss.str(), Bzn);
+    // ss.str(""); ss << "/fields/Ex/cycle_" << lastcycle; read_and_map(ss.str(), Ex);
+    // ss.str(""); ss << "/fields/Ey/cycle_" << lastcycle; read_and_map(ss.str(), Ey);
+    // ss.str(""); ss << "/fields/Ez/cycle_" << lastcycle; read_and_map(ss.str(), Ez);
 
-    // Bzn
-    ss.str("");ss << "/fields/Bz/cycle_" << lastcycle;
-    dataset_id = H5Dopen2(file_id, ss.str().c_str(), H5P_DEFAULT); // HDF 1.8.8
-    status = H5Dread(dataset_id, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, temp_storage.data());
-    k = 0;
-    for (int i = 1; i < nxn - 1; i++)
-      for (int j = 1; j < nyn - 1; j++)
-        for (int jj = 1; jj < nzn - 1; jj++)
-          Bzn[i][j][jj] = temp_storage[k++];
+    // // Read charge density (rho) for each species using the same lambda logic
+    // // open the charge density for species
+    // for (int is = 0; is < ns; is++) {
+    //   ss.str(""); ss << "/moments/species_" << is << "/rho/cycle_" << lastcycle;
+    //   dataset_id = H5Dopen2(file_id, ss.str().c_str(), H5P_DEFAULT);
+    //   H5Sselect_hyperslab(shared_dataspace, H5S_SELECT_SET, offset, NULL, curr_dims, NULL);
+    //   H5Dread(dataset_id, H5T_NATIVE_DOUBLE, memspace_id, shared_dataspace, H5P_DEFAULT, temp_storage.data());
+    //   array4_double& rhons = *rhons_;
+    //   k = 0;
+    //   for (int i = 1; i < nxn - 1; i++) {
+    //     for (int j = 1; j < nyn - 1; j++) {
+    //       for (int jj = 1; jj < nzn - 1; jj++) {
+    //         rhons[is][i][j][jj] = temp_storage[k++];
+    //       }
+    //     }
+    //   }
+    //   H5Dclose(dataset_id);
+    // }
 
-    status = H5Dclose(dataset_id);
-
-
-    // Ex
-    ss.str("");ss << "/fields/Ex/cycle_" << lastcycle;
-    dataset_id = H5Dopen2(file_id, ss.str().c_str(), H5P_DEFAULT); // HDF 1.8.8
-    status = H5Dread(dataset_id, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, temp_storage.data());
-    k = 0;
-    for (int i = 1; i < nxn - 1; i++)
-      for (int j = 1; j < nyn - 1; j++)
-        for (int jj = 1; jj < nzn - 1; jj++)
-          Ex[i][j][jj] = temp_storage[k++];
-
-    status = H5Dclose(dataset_id);
-
-
-    // Ey
-    ss.str("");ss << "/fields/Ey/cycle_" << lastcycle;
-    dataset_id = H5Dopen2(file_id, ss.str().c_str(), H5P_DEFAULT); // HDF 1.8.8
-    status = H5Dread(dataset_id, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, temp_storage.data());
-    k = 0;
-    for (int i = 1; i < nxn - 1; i++)
-      for (int j = 1; j < nyn - 1; j++)
-        for (int jj = 1; jj < nzn - 1; jj++)
-          Ey[i][j][jj] = temp_storage[k++];
-
-    status = H5Dclose(dataset_id);
-
-    // Ez
-    ss.str("");ss << "/fields/Ez/cycle_" << lastcycle;
-    dataset_id = H5Dopen2(file_id, ss.str().c_str(), H5P_DEFAULT); // HDF 1.8.8
-    status = H5Dread(dataset_id, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, temp_storage.data());
-    k = 0;
-    for (int i = 1; i < nxn - 1; i++)
-      for (int j = 1; j < nyn - 1; j++)
-        for (int jj = 1; jj < nzn - 1; jj++)
-          Ez[i][j][jj] = temp_storage[k++];
-
-    status = H5Dclose(dataset_id);
-
-    // open the charge density for species
-    for (int is = 0; is < ns; is++) {
-      ss.str("");ss << "/moments/species_" << is << "/rho/cycle_" << lastcycle;
-      dataset_id = H5Dopen2(file_id, ss.str().c_str(), H5P_DEFAULT); // HDF 1.8.8
-      status = H5Dread(dataset_id, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, temp_storage.data());
-      status = H5Dclose(dataset_id);
-      array4_double& rhons = *rhons_;
-      k = 0;
-      for (int i = 1; i < nxn - 1; i++)
-        for (int j = 1; j < nyn - 1; j++)
-          for (int jj = 1; jj < nzn - 1; jj++)
-            rhons[is][i][j][jj] = temp_storage[k++];
-    }
-
-    // close the hdf file
-    status = H5Fclose(file_id);
+    // // 6. Cleanup
+    // H5Sclose(shared_dataspace);
+    // H5Sclose(memspace_id);
+    // H5Fclose(file_id);
 #endif
 }
 
-// extracted from Particles3Dcomm.cpp
-//
 void Collective::read_particles_restart(
     const VCtopology3D* vct,
     int species_number,
-    vector_double& u,
-    vector_double& v,
-    vector_double& w,
-    vector_double& q,
-    vector_double& x,
-    vector_double& y,
-    vector_double& z,
-    vector_double& t)const
+    vector_double& u, vector_double& v, vector_double& w,
+    vector_double& q, vector_double& x, vector_double& y,
+    vector_double& z, vector_double& t) const
 {
 #ifdef NO_HDF5
   eprintf("Require HDF5 to read from restart file.");
 #else
-    if (vct->getCartesian_rank() == 0 && species_number == 0)
-    {
-      printf("LOADING PARTICLES FROM RESTART FILE in %s/restart.hdf\n",
-        getRestartDirName().c_str());
-    }
-    stringstream ss;
-    ss << vct->getCartesian_rank();
-    string name_file = getRestartDirName() + "/restart" + ss.str() + ".hdf";
-    // hdf stuff
-    hid_t file_id, dataspace;
-    hid_t datatype, dataset_id;
-    herr_t status;
-    size_t size;
-    hsize_t dims_out[1];        /* dataset dimensions */
-    int status_n;
+    restartState_->read_particles_restart(vct, species_number,
+                                           u, v, w,
+                                           q, x, y,
+                                           z, t);
+    // if (vct->getCartesian_rank() == 0 && species_number == 0) {
+    //   printf("LOADING PARTICLES FROM RESTART FILE in %s/restart.hdf\n", getRestartDirName().c_str());
+    // }
 
-    // open the hdf file
-    file_id = H5Fopen(name_file.c_str(), H5F_ACC_RDWR, H5P_DEFAULT);
-    if (file_id < 0) {
-      eprintf("couldn't open file: %s\n"
-        "\tRESTART NOT POSSIBLE", name_file.c_str());
-      //cout << "couldn't open file: " << name_file << endl;
-      //cout << "RESTART NOT POSSIBLE" << endl;
-    }
+    // // 1. File Coordinates & Internal Chunk ID
+    // int file_coord[3] = {
+    //     vct->getCoordinates(0) / x_fact,
+    //     vct->getCoordinates(1) / y_fact,
+    //     vct->getCoordinates(2) / z_fact
+    // };
+    // int internal_coord[3] = {
+    //     vct->getCoordinates(0) % x_fact,
+    //     vct->getCoordinates(1) % y_fact,
+    //     vct->getCoordinates(2) % z_fact
+    // };
 
+    // stringstream restart_name;
+    // restart_name << RestartDirName << "/restart_x"
+    //              << setw(3) << setfill('0') << file_coord[0] << "_y"
+    //              << setw(3) << setfill('0') << file_coord[1] << "_z"
+    //              << setw(3) << setfill('0') << file_coord[2] << ".hdf";
+    // string name_file = restart_name.str();
 
-    //find the last cycle
-    int lastcycle=0;
-    dataset_id = H5Dopen2(file_id, "/last_cycle", H5P_DEFAULT); // HDF 1.8.8
-    status = H5Dread(dataset_id, H5T_NATIVE_INT, H5S_ALL, H5S_ALL, H5P_DEFAULT, &lastcycle);
-    status = H5Dclose(dataset_id);
+    // // 2. Open File and Get Last Cycle
+    // hid_t file_id = H5Fopen(name_file.c_str(), H5F_ACC_RDONLY, H5P_DEFAULT);
+    // if (file_id < 0) {
+    //   eprintf("couldn't open file: %s\n\tRESTART NOT POSSIBLE", name_file.c_str());
+    // }
 
-    stringstream species_name;
-    species_name << species_number;
+    // int lastcycle = 0;
+    // hid_t dataset_id = H5Dopen2(file_id, "/last_cycle", H5P_DEFAULT);
+    // H5Dread(dataset_id, H5T_NATIVE_INT, H5S_ALL, H5S_ALL, H5P_DEFAULT, &lastcycle);
+    // H5Dclose(dataset_id);
 
-    ss.str("");ss << "/particles/species_" << species_number << "/x/cycle_" << lastcycle;
-    dataset_id = H5Dopen2(file_id, ss.str().c_str(), H5P_DEFAULT); // HDF 1.8.8
-    datatype = H5Dget_type(dataset_id);
-    size = H5Tget_size(datatype);
-    dataspace = H5Dget_space(dataset_id); /* dataspace handle */
-    status_n = H5Sget_simple_extent_dims(dataspace, dims_out, NULL);
+    // // 3. Setup Shared Dataspace and Dimensions (Using 'x' dataset)
+    // stringstream ss;
+    // ss << "/particles/species_" << species_number << "/x/cycle_" << lastcycle;
+    // dataset_id = H5Dopen2(file_id, ss.str().c_str(), H5P_DEFAULT);
+    
+    // hid_t shared_dataspace = H5Dget_space(dataset_id);
+    // hsize_t dims_out[1];
+    // H5Sget_simple_extent_dims(shared_dataspace, dims_out, NULL);
+    // H5Dclose(dataset_id); // Close the dataset, we just needed the dataspace to get dims
 
-    // get how many particles there are on this processor for this species
-    status_n = H5Sget_simple_extent_dims(dataspace, dims_out, NULL);
-    const int nop = dims_out[0]; // number of particles in this process
-    //Particles3Dcomm::resize_SoA(nop);
-    {
-      //
-      // allocate space for particles including padding
-      //
-      const int padded_nop = roundup_to_multiple(nop,DVECWIDTH);
-      u.reserve(padded_nop);
-      v.reserve(padded_nop);
-      w.reserve(padded_nop);
-      q.reserve(padded_nop);
-      x.reserve(padded_nop);
-      y.reserve(padded_nop);
-      z.reserve(padded_nop);
-      t.reserve(padded_nop);
-      //
-      // define size of particle data
-      //
-      u.resize(nop);
-      v.resize(nop);
-      w.resize(nop);
-      q.resize(nop);
-      x.resize(nop);
-      y.resize(nop);
-      z.resize(nop);
-      t.resize(nop);
-    }
-    // get x
-    status = H5Dread(dataset_id, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, &x[0]);
-    // close the data set
-    status = H5Dclose(dataset_id);
+    // // 4. Calculate 1D chunking
+    // int tot_mult_fact = x_fact * y_fact * z_fact;
+    // int chunk_id = internal_coord[0] + (internal_coord[1] * x_fact) + (internal_coord[2] * x_fact * y_fact);
 
-    // get y
-    ss.str("");ss << "/particles/species_" << species_number << "/y/cycle_" << lastcycle;
-    dataset_id = H5Dopen2(file_id, ss.str().c_str(), H5P_DEFAULT); // HDF 1.8.8
-    status = H5Dread(dataset_id, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, &y[0]);
-    status = H5Dclose(dataset_id);
+    // hsize_t count[1] = { dims_out[0] / tot_mult_fact };
+    // if (chunk_id == tot_mult_fact - 1) {
+    //     count[0] += dims_out[0] % tot_mult_fact; // Give remainder to the last chunk
+    // }
+    
+    // hsize_t offset[1] = { chunk_id * (dims_out[0] / tot_mult_fact) };
 
-    // get z
-    ss.str("");ss << "/particles/species_" << species_number << "/z/cycle_" << lastcycle;
-    dataset_id = H5Dopen2(file_id, ss.str().c_str(), H5P_DEFAULT); // HDF 1.8.8
-    status = H5Dread(dataset_id, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, &z[0]);
-    status = H5Dclose(dataset_id);
+    // // 5. Memory Allocation (Preserving original padding logic)
+    // const int nop = count[0];
+    // const int padded_nop = roundup_to_multiple(nop, DVECWIDTH);
+    
+    // u.reserve(padded_nop); v.reserve(padded_nop); w.reserve(padded_nop);
+    // q.reserve(padded_nop); x.reserve(padded_nop); y.reserve(padded_nop);
+    // z.reserve(padded_nop); t.reserve(padded_nop);
+    
+    // u.resize(nop); v.resize(nop); w.resize(nop);
+    // q.resize(nop); x.resize(nop); y.resize(nop);
+    // z.resize(nop); t.resize(nop);
 
-    // get u
-    ss.str("");ss << "/particles/species_" << species_number << "/u/cycle_" << lastcycle;
-    dataset_id = H5Dopen2(file_id, ss.str().c_str(), H5P_DEFAULT); // HDF 1.8.8
-    status = H5Dread(dataset_id, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, &u[0]);
-    status = H5Dclose(dataset_id);
+    // // 6. Setup 1D Hyperslab
+    // hid_t memspace_id = H5Screate_simple(1, count, NULL);
+    // H5Sselect_hyperslab(shared_dataspace, H5S_SELECT_SET, offset, NULL, count, NULL);
 
-    // get v
-    ss.str("");ss << "/particles/species_" << species_number << "/v/cycle_" << lastcycle;
-    dataset_id = H5Dopen2(file_id, ss.str().c_str(), H5P_DEFAULT); // HDF 1.8.8
-    status = H5Dread(dataset_id, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, &v[0]);
-    status = H5Dclose(dataset_id);
+    // // 7. Lambda helper to eliminate repetitive reads
+    // auto read_particle_array = [&](const string& path, vector_double& vec) {
+    //     hid_t d_id = H5Dopen2(file_id, path.c_str(), H5P_DEFAULT);
+    //     if (d_id >= 0) { // Safety check
+    //         H5Dread(d_id, H5T_NATIVE_DOUBLE, memspace_id, shared_dataspace, H5P_DEFAULT, &vec[0]);
+    //         H5Dclose(d_id);
+    //     }
+    // };
 
-    // get w
-    ss.str("");ss << "/particles/species_" << species_number << "/w/cycle_" << lastcycle;
-    dataset_id = H5Dopen2(file_id, ss.str().c_str(), H5P_DEFAULT); // HDF 1.8.8
-    status = H5Dread(dataset_id, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, &w[0]);
-    status = H5Dclose(dataset_id);
+    // // 8. Execute Reads (Reusing the shared hyperslab for all arrays)
+    // ss.str(""); ss << "/particles/species_" << species_number << "/x/cycle_" << lastcycle;
+    // read_particle_array(ss.str(), x);
+    
+    // ss.str(""); ss << "/particles/species_" << species_number << "/y/cycle_" << lastcycle;
+    // read_particle_array(ss.str(), y);
+    
+    // ss.str(""); ss << "/particles/species_" << species_number << "/z/cycle_" << lastcycle;
+    // read_particle_array(ss.str(), z);
+    
+    // ss.str(""); ss << "/particles/species_" << species_number << "/u/cycle_" << lastcycle;
+    // read_particle_array(ss.str(), u);
+    
+    // ss.str(""); ss << "/particles/species_" << species_number << "/v/cycle_" << lastcycle;
+    // read_particle_array(ss.str(), v);
+    
+    // ss.str(""); ss << "/particles/species_" << species_number << "/w/cycle_" << lastcycle;
+    // read_particle_array(ss.str(), w);
+    
+    // ss.str(""); ss << "/particles/species_" << species_number << "/q/cycle_" << lastcycle;
+    // read_particle_array(ss.str(), q);
 
-    // get q
-    ss.str("");ss << "/particles/species_" << species_number << "/q/cycle_" << lastcycle;
-    dataset_id = H5Dopen2(file_id, ss.str().c_str(), H5P_DEFAULT); // HDF 1.8.8
-    status = H5Dread(dataset_id, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, &q[0]);
+    // // Following original code logic: if ID is not explicitly handled, read 'q' into 't' as fallback
+    // ss.str(""); ss << "/particles/species_" << species_number << "/q/cycle_" << lastcycle;
+    // read_particle_array(ss.str(), t);
 
-    //if ID is not saved, read in q as ID
-    status = H5Dread(dataset_id, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, &t[0]);
-
-    status = H5Dclose(dataset_id);
-
-    /* get ID
-		ss.str("");ss << "/particles/species_" << species_number << "/ID/cycle_" << lastcycle;
-		dataset_id = H5Dopen2(file_id, ss.str().c_str(), H5P_DEFAULT); // HDF 1.8.8
-		status = H5Dread(dataset_id, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, &t[0]);
-		status = H5Dclose(dataset_id);
-    */
-
-    status = H5Fclose(file_id);
+    // // 9. Cleanup
+    // H5Sclose(shared_dataspace);
+    // H5Sclose(memspace_id);
+    // H5Fclose(file_id);
 #endif
 }
 
@@ -1140,6 +1148,8 @@ Collective::Collective(int argc, char **argv) {
   init_derived_parameters();
 }
 
+
+/**/
 void Collective::init_derived_parameters()
 {
   /*! fourpi = 4 greek pi */
@@ -1299,9 +1309,8 @@ void Collective::save() {
   my_file << "Mover error tolerance    = " << NiterMover << endl;
   my_file << "---------------------------" << endl;
   my_file << "Results saved in: " << SaveDirName << endl;
-  my_file << "Restart saved in: " << RestartDirName << endl;
+  my_file << "Restart saved in: " << RestartSaveDirName << endl;
   my_file << "---------------------" << endl;
   my_file.close();
 
 }
-

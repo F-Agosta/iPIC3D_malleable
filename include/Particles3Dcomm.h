@@ -112,10 +112,13 @@ public:
   int separate_and_send_particles();
   void recommunicate_particles_until_done(int min_num_iterations=3);
   void communicate_particles();
+  void redistribute_particles_by_dimension();
   void pad_capacities();
  private:
   void resize_AoS(int nop);
   void resize_SoA(int nop);
+  void redistribute_dimension(int dimension, MPI_Comm row_comm,
+    int row_length);
   void copyParticlesToAoS();
   void copyParticlesToSoA();
 
