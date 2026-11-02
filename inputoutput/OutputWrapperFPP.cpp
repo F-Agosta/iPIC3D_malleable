@@ -25,6 +25,8 @@
 #include "Grid3DCU.h"
 #include "EMfields3D.h"
 #include "Particles3D.h"
+#include <iomanip>
+#include <sstream>
 
 void OutputWrapperFPP::init_output_files(
 	    Collective    *col,
@@ -42,10 +44,26 @@ void OutputWrapperFPP::init_output_files(
     num_proc_ss << cartesian_rank;
     string num_proc_str = num_proc_ss.str();
     SaveDirName = col->getSaveDirName();
-    RestartDirName = col->getRestartDirName();
+    RestartDirName = col->getRestartSaveDirName();
     int restart_status = col->getRestart_status();
     output_file = SaveDirName + "/proc"   + num_proc_str + ".hdf";
-    restart_file= RestartDirName + "/restart"+ num_proc_str + ".hdf";
+    // restart file name should represent the coordinates of the the process
+    // in the simulation
+    int coord[3];
+    coord[0] = vct->getCoordinates(0);
+    coord[1] = vct->getCoordinates(1);
+    coord[2] = vct->getCoordinates(2);
+
+    stringstream restart_name;
+    restart_name << RestartDirName
+                 << "/restart_x"
+                 << setw(3) << setfill('0') << coord[0]
+                 << "_y"
+                 << setw(3) << setfill('0') << coord[1]
+                 << "_z"
+                 << setw(3) << setfill('0') << coord[2]
+                 << ".hdf";
+    restart_file = restart_name.str();
 
     // Initialize the output (simulation results and restart file)
     hdf5_agent.set_simulation_pointers(EMf, grid, vct, col);

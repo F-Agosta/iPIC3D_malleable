@@ -23,6 +23,7 @@
 #include "WriteOutputParallel.h"
 #include "Grid3DCU.h"
 #include "EMfields3D.h"
+#include "Collective.h"
 #include "VCtopology3D.h"
 #include "errors.h"
 #include <string>
@@ -62,7 +63,7 @@ void WriteOutputParallel(Grid3DCU *grid, EMfields3D *EMf, CollectiveIO *col, VCt
   /* Declare and open the parallel HDF5 file */
   /* --------------------------------------- */
 
-  PHDF5fileClass outputfile(filename, 3, vct->getCoordinates(), vct->getComm());
+  PHDF5fileClass outputfile(filename, 3, vct->getCoordinates(), vct->getFieldComm());
 
   outputfile.CreatePHDF5file(L, dglob, dlocl, false);
 
@@ -70,9 +71,9 @@ void WriteOutputParallel(Grid3DCU *grid, EMfields3D *EMf, CollectiveIO *col, VCt
   /* Write the Electric field */
   /* ------------------------ */
 
-  outputfile.WritePHDF5dataset("Fields", "Ex", EMf->getExc(), nxc-2, nyc-2, nzc-2);
-  outputfile.WritePHDF5dataset("Fields", "Ey", EMf->getEyc(), nxc-2, nyc-2, nzc-2);
-  outputfile.WritePHDF5dataset("Fields", "Ez", EMf->getEzc(), nxc-2, nyc-2, nzc-2);
+  outputfile.WritePHDF5dataset("Fields", "Ex", EMf->getEx(), nxc-2, nyc-2, nzc-2);
+  outputfile.WritePHDF5dataset("Fields", "Ey", EMf->getEy(), nxc-2, nyc-2, nzc-2);
+  outputfile.WritePHDF5dataset("Fields", "Ez", EMf->getEz(), nxc-2, nyc-2, nzc-2);
 
   /* ------------------------ */
   /* Write the Magnetic field */
@@ -85,20 +86,6 @@ void WriteOutputParallel(Grid3DCU *grid, EMfields3D *EMf, CollectiveIO *col, VCt
   /* ----------------------------------------------- */
   /* Write the moments for each species */
   /* ----------------------------------------------- */
-
-  for (int is = 0; is < col->getNs(); is++)
-  {
-    stringstream snmbr;
-    snmbr << is;
-    const string num = snmbr.str();
-
-    // Charge Density
-    outputfile.WritePHDF5dataset("Fields", string("Rho_")+num , EMf->getRHOcs(is), nxc-2, nyc-2, nzc-2);
-    // Current
-    outputfile.WritePHDF5dataset("Fields", string("Jx_")+num, EMf->getJxsc(is), nxc-2, nyc-2, nzc-2);
-    outputfile.WritePHDF5dataset("Fields", string("Jy_")+num, EMf->getJysc(is), nxc-2, nyc-2, nzc-2);
-    outputfile.WritePHDF5dataset("Fields", string("Jz_")+num, EMf->getJzsc(is), nxc-2, nyc-2, nzc-2);
-  }
 
   outputfile.ClosePHDF5file();
 
