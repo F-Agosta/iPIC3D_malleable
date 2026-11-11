@@ -6,3 +6,5 @@ Debug*
 
 **/*.hdf
 **/*.log
+data/*
+restart-repartition-test/runs/*

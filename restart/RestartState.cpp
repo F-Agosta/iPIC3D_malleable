@@ -176,6 +176,15 @@ int RestartState::read_last_cycle() const
 #endif
 }
 
+void RestartState::determineResizeMode(int old_proc, int new_proc) {
+    if (old_proc > new_proc)
+        resize_mode = SHRINKING;
+    else if (old_proc > new_proc)
+        resize_mode = GROWING;
+    else
+        resize_mode = SAME;
+}
+
 // ============================================================
 // read_field_restart
 // ============================================================

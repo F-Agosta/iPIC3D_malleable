@@ -492,6 +492,9 @@ void Collective::ReadInput(string inputfile) {
               restartState_->get_ZLEN_prev(), XLEN, YLEN, ZLEN);
       MPIdata::exit(1);
     }
+    int curr_proc = getXLEN() * getYLEN() * getZLEN();
+    int prev_proc = getXLENprev() * getYLENprev() * getZLENprev();
+    restartState_->determineResizeMode()
     restart_status = 1;
     last_cycle = restartState_->read_last_cycle();
 

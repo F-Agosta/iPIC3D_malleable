@@ -25,6 +25,13 @@ public:
         int internal[3];
     };
 
+    enum ResizeMode {
+        UNKNOWN,
+        SAME,
+        GROWING,
+        SHRINKING
+    }
+
 private:
     /*! previous subdomain dimensions */
     int XLEN_prev;
@@ -44,6 +51,9 @@ private:
     /*! status of the restart: 0 = fresh start, 1 = restart */
     int restart_state;
 
+    /*! This attribute represents the kind of the restart */
+    ResizeMode resize_mode;
+
     /*! directory where the restart files live */
     string RestartDirName;
 
@@ -54,7 +64,7 @@ public:
     /*! Construct a RestartState for the given restart directory.
      *  After construction, call read_old_topology() and validate_new_topology()
      *  before using the read methods. */
-    RestartState(const string& restartDirName);
+    RestartState(const string& restartDirName) : resize_mode(UNKNOWN) {};
 
     /*! Read the topology (XLEN, YLEN, ZLEN) of the previous simulation
      *  from settings.hdf in RestartDirName.
@@ -101,6 +111,9 @@ public:
         vector_double& q, vector_double& x, vector_double& y,
         vector_double& z, vector_double& t) const;
 
+    /*! Determine the restart mode given the number of processes */
+    void determineResizeMode(int old_proc, int new_proc);
+
     // ----------------------------------------------------------------
     // getters
     // ----------------------------------------------------------------
@@ -119,6 +132,8 @@ public:
     int get_restart_state() const { return restart_state; }
 
     string getRestartDirName() const { return RestartDirName; }
+
+    ResizeMode getResizeMode() const { return resize_mode; }
 };
 
 #endif // RestartState_H
