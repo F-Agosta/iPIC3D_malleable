@@ -96,19 +96,38 @@ int RestartState::read_old_topology()
  *  Also computes x_f, y_f, z_f and x_m, y_m, z_m. */
 int RestartState::validate_new_topology(int XLEN_new, int YLEN_new, int ZLEN_new)
 {
-    x_m = XLEN_new % XLEN_prev;
-    y_m = YLEN_new % YLEN_prev;
-    z_m = ZLEN_new % ZLEN_prev;
+    //this is the growing case
+    if (XLEN_new > XLEN_prev && YLEN_new > YLEN_prev && ZLEN_new > ZLEN_prev) {
+        x_m = XLEN_new % XLEN_prev;
+        y_m = YLEN_new % YLEN_prev;
+        z_m = ZLEN_new % ZLEN_prev;
 
-    if (x_m || y_m || z_m) {
-        return -1;
+        if (x_m || y_m || z_m) {
+            return -1;
+        }
+
+        x_f = XLEN_new / XLEN_prev;
+        y_f = YLEN_new / YLEN_prev;
+        z_f = ZLEN_new / ZLEN_prev;
+
+        return 1;
+        //shrinking case
+    }else if (XLEN_new > XLEN_prev && YLEN_new > YLEN_prev && ZLEN_new > ZLEN_prev) {
+        x_m = XLEN_prev % XLEN_new;
+        y_m = YLEN_prev % YLEN_new;
+        z_m = ZLEN_prev % ZLEN_new;
+
+        if (x_m || y_m || z_m) {
+            return -1;
+        }
+
+        x_f = XLEN_prev / XLEN_new;
+        y_f = YLEN_prev / YLEN_new;
+        z_f = ZLEN_prev / ZLEN_new;
+        return 1;
     }
 
-    x_f = XLEN_new / XLEN_prev;
-    y_f = YLEN_new / YLEN_prev;
-    z_f = ZLEN_new / ZLEN_prev;
-
-    return 1;
+    return -1;
 }
 
 // ============================================================
@@ -116,18 +135,26 @@ int RestartState::validate_new_topology(int XLEN_new, int YLEN_new, int ZLEN_new
 // ============================================================
 
 /*! Compute per-process file coordinates and internal offsets from the VCtopology. */
-RestartState::RestartCoordinates
-RestartState::setup_coords(const VCtopology3D* vct) const
+vector<RestartState::RestartCoordinates>
+RestartState::setup_coords(const VCtopology3D* vct, const ResizeMode mode) const
 {
-    RestartCoordinates coords;
-    coords.prev[0]     = vct->getCoordinates(0) / x_f;
-    coords.prev[1]     = vct->getCoordinates(1) / y_f;
-    coords.prev[2]     = vct->getCoordinates(2) / z_f;
-
-    coords.internal[0] = vct->getCoordinates(0) % x_f;
-    coords.internal[1] = vct->getCoordinates(1) % y_f;
-    coords.internal[2] = vct->getCoordinates(2) % z_f;
-    return coords;
+    vector<RestartState::RestartCoordinates> prevCoord;
+    if (mode == ResizeMode::SHRINKING ) {
+        for (int x = vct->getCoordinates(0); x < x_f; x++) {
+            for (int y = vct->getCoordinates(1); y < y_f; y++) {
+                for (int z = vct->getCoordinates(2); z < z_f; z++) {
+                    prevCoord.emplace_back(x, y, z)
+                }
+            }
+        }
+    } else if (mode == ResizeMode::SAME || mode == ResizeMode::GROWING) {
+        prevCoord.emplace_back(vct->getCoordinates(0) / x_f,
+                               vct->getCoordinates(1) / y_f,
+                               vct->getCoordinates(2) / z_f)
+    } else {
+        std::out << "Uninitialized ResizeMode" << std::endl;
+    } 
+    return prevCoord;
 }
 
 // ============================================================
@@ -210,40 +237,19 @@ void RestartState::read_field_restart(
     }
 
     const RestartCoordinates coords = setup_coords(vct);
-    // 1. File & Internal Coordinates Setup
-    // int file_coord[3] = {
-    //     vct->getCoordinates(0) / x_f,
-    //     vct->getCoordinates(1) / y_f,
-    //     vct->getCoordinates(2) / z_f
-    // };
-    // int internal_coord_local[3] = {
-    //     vct->getCoordinates(0) % x_f,
-    //     vct->getCoordinates(1) % y_f,
-    //     vct->getCoordinates(2) % z_f
-    // };
 
     string name_file = generate_file_name(coords);
-    // stringstream restart_name;
-    // restart_name << RestartDirName << "/restart_x"
-    //              << setw(3) << setfill('0') << file_coord[0] << "_y"
-    //              << setw(3) << setfill('0') << file_coord[1] << "_z"
-    //              << setw(3) << setfill('0') << file_coord[2] << ".hdf";
-    // string name_file = restart_name.str();
 
-    // 2. Open File and Get Last Cycle
+    // Open File and Get Last Cycle
     hid_t file_id = H5Fopen(name_file.c_str(), H5F_ACC_RDONLY, H5P_DEFAULT);
     if (file_id < 0) {
         eprintf("Failed to open file: %s\n", name_file.c_str());
     }
 
 
-    //NB: this piece is useless because last_cycle has already been read
     read_last_cycle();
-    // hid_t dataset_id = H5Dopen2(file_id, "/last_cycle", H5P_DEFAULT);
-    // H5Dread(dataset_id, H5T_NATIVE_INT, H5S_ALL, H5S_ALL, H5P_DEFAULT, &last_cycle);
-    // H5Dclose(dataset_id);
 
-    // 3. Grid Math & Shared Dataspace Initialization (Using Bx)
+    // Grid Math & Shared Dataspace Initialization (Using Bx)
     stringstream ss;
     ss << "/fields/Bx/cycle_" << last_cycle;
     hid_t dataset_id = H5Dopen2(file_id, ss.str().c_str(), H5P_DEFAULT);

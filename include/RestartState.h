@@ -21,8 +21,9 @@ class RestartState
 {
 public:
     struct RestartCoordinates {
-        int prev[3];
-        int internal[3];
+        int x;
+        int y;
+        int z;
     };
 
     enum ResizeMode {
@@ -38,7 +39,8 @@ private:
     int YLEN_prev;
     int ZLEN_prev;
 
-    /*! multiplication factors: new_dim / prev_dim */
+    /*! multiplication factors: new_dim / prev_dim or 
+    viceversa in case of shrinking */
     int x_f;
     int y_f;
     int z_f;
@@ -73,7 +75,7 @@ public:
 
     /*! Check that the new topology (passed in) is compatible with the old one,
      *  i.e. that each new dimension is an exact multiple of the old dimension.
-     *  Also computes the x_f, y_f, z_f multiplication factors.
+     *  Also computes the x_f, y_f, z_f multiplication factors. NB. it shouldn't
      *  @param XLEN_new  number of MPI subdomains in X for the new run
      *  @param YLEN_new  number of MPI subdomains in Y for the new run
      *  @param ZLEN_new  number of MPI subdomains in Z for the new run
@@ -82,16 +84,18 @@ public:
 
     /*! Calculate the per-process coordinates used to derive file names and
      *  hyperslab offsets.
+     *  In case of a shrinking process it tells the coordinates of the subdomains that composed it
+     *  In caso of a growing process just the coordinates of the domain it was a part of
      *  @param vct  the virtual Cartesian topology of the current run */
-    RestartCoordinates setup_coords(const VCtopology3D* vct) const;
+    vector<RestartCoordinates> setup_coords(const VCtopology3D* vct, const ResizeMode mode) const;
 
     /*! Read the last cycle number from the restart file for this process.
      *  @return the last cycle number, or -1 on error. */
     int read_last_cycle() const;
 
-    /*! Generate the name of the restart HDF5 file that this process should read.
+    /*! Generate the name of the restart HDF5 file/s that this process should read.
      *  @return the full path to the restart file. */
-    string generate_file_name(const RestartCoordinates& coords) const;
+    vector<string> generate_file_name(const RestartCoordinates& coords, const ResizeMode mode) const;
 
     /*! Read electromagnetic fields (B, E) and charge densities (rho) from
      *  the restart file.  Interface matches the old Collective method. */
