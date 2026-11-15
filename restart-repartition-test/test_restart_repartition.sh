@@ -39,16 +39,20 @@ CHECKPOINT_BASELINE="$TEST_ROOT/runs/restart/baseline-2"
 CHECKPOINT_CONTROL="$TEST_ROOT/runs/restart/restart-same-2"
 CHECKPOINT_2_TO_4="$TEST_ROOT/runs/restart/restart-2-to-4"
 CHECKPOINT_4_TO_8="$TEST_ROOT/runs/restart/restart-4-to-8"
+CHECKPOINT_8_TO_4="$TEST_ROOT/runs/restart/restart-4-to-8"
+
 
 BASELINE_OUTPUT="$TEST_ROOT/runs/save/baseline-2"
 CONTROL_OUTPUT="$TEST_ROOT/runs/save/restart-same-2"
 REPARTITION_OUTPUT="$TEST_ROOT/runs/save/restart-2-to-4"
 REPARTITION_4_TO_8_OUTPUT="$TEST_ROOT/runs/save/restart-4-to-8"
+REPARTITION_8_TO_4_OUTPUT="$TEST_ROOT/runs/save/restart-8-to-4"
 
 BASELINE_INPUT="$TEST_ROOT/inputs/baseline-2.inp"
 CONTROL_INPUT="$TEST_ROOT/inputs/restart-same-2.inp"
 REPARTITION_INPUT="$TEST_ROOT/inputs/restart-2-to-4.inp"
 REPARTITION_4_TO_8_INPUT="$TEST_ROOT/inputs/restart-4-to-8.inp"
+REPARTITION_8_TO_4_INPUT="$TEST_ROOT/inputs/restart-2-to-4.inp"
 
 if [[ ! -x "$EXE" ]]; then
     echo "Executable not found: $EXE" >&2
@@ -90,6 +94,17 @@ verify_checkpoint_4_to_8() {
                 restart_x006_y000_z000.hdf restart_x007_y000_z000.hdf; do
         if [[ ! -f "$CHECKPOINT_4_TO_8/$file" ]]; then
             echo "Expected 4-to-8 checkpoint file not found: $CHECKPOINT_4_TO_8/$file" >&2
+            exit 1
+        fi
+    done
+}
+
+verify_checkpoint_8_to_4() {
+    for file in settings.hdf \
+                restart_x000_y000_z000.hdf restart_x001_y000_z000.hdf \
+                restart_x002_y000_z000.hdf restart_x003_y000_z000.hdf; do
+        if [[ ! -f "$CHECKPOINT_8_TO_4/$file" ]]; then
+            echo "Expected 8-to-4 checkpoint file not found: $CHECKPOINT_8_TO_4/$file" >&2
             exit 1
         fi
     done
@@ -150,6 +165,19 @@ run_repartition_4_to_8() {
     verify_checkpoint_4_to_8
 }
 
+run_repartition_8_to_4() {
+    verify_checkpoint_4_to_8
+    mkdir -p "$REPARTITION_8_TO_4_OUTPUT" "$CHECKPOINT_8_TO_4"
+
+    echo "Running the 8-to-4 restart"
+    (
+        cd "$ROOT"
+        mpirun -np 4 "$EXE" restart "$REPARTITION_INPUT"
+    )
+
+    verify_checkpoint_8_to_4
+}
+
 case "$TEST_MODE" in
     baseline)
         run_baseline
@@ -163,11 +191,15 @@ case "$TEST_MODE" in
     repartition-4-to-8)
         run_repartition_4_to_8
         ;;
+    repartition-8-to-4)
+        run_repartition_8_to_4
+        ;;
     all)
         run_baseline
         run_control
         run_repartition
         run_repartition_4_to_8
+        run_repartition_8_to_4
         ;;
 esac
 
