@@ -36,7 +36,7 @@
 #include "VCtopology3D.h"
 #include "Grid3DCU.h"
 #include "aligned_vector.h"
-#include "RestartState.h"
+#include "RestartManager.h"
 
 class ConfigFile;
 using namespace std;
@@ -59,6 +59,8 @@ class Collective
     };
     int read_enum_parameter(const char* option_name, const char* default_value,
       const ConfigFile& config);
+
+    int read_from_settings();
   public:
     static const char* get_name_of_enum(int in);
   public:
@@ -66,28 +68,21 @@ class Collective
     Collective(int argc, char **argv);
     /*! read input file */
     void ReadInput(string inputfile);
-    /*! read the restart input file from HDF5 */
-    int ReadRestart(string inputfile); // this method isn't actually called
 
-    /*! Read the topology of the previous simulation (delegates to RestartState). */
-    int read_old_topology(string inputfile);
-    /*! Check that the new topology is compatible with the old one (delegates to RestartState). */
-    int check_restart_validity();
-
-    /*! Read electromagnetic fields from the restart file (delegates to RestartState). */
+    /*! Read electromagnetic fields from the restart file (delegates to RestartManager). */
     void read_field_restart(const VCtopology3D* vct, const Grid* grid,
                             arr3_double Bxn, arr3_double Byn, arr3_double Bzn,
                             arr3_double Ex,  arr3_double Ey,  arr3_double Ez,
                             array4_double* rhons_, int ns) const;
 
-    /*! Read particle data from the restart file (delegates to RestartState). */
+    /*! Read particle data from the restart file (delegates to RestartManager). */
     void read_particles_restart(const VCtopology3D* vct, int species_number,
                                 vector_double& u, vector_double& v, vector_double& w,
                                 vector_double& q, vector_double& x, vector_double& y,
                                 vector_double& z, vector_double& t) const;
 
-    /*! Access the RestartState object (e.g. to call setup_coords after topology is ready). */
-    //RestartState& getRestartState() { return restartState_; }
+    /*! Access the RestartManager object (e.g. to read fields/particles after topology is ready). */
+    //RestartManager& getRestartManager() { return restartManager_; }
 
     void init_derived_parameters();
     /*! Print physical parameters */
@@ -111,10 +106,10 @@ class Collective
     int getXLEN()const{ return (XLEN); }
     int getYLEN()const{ return (YLEN); }
     int getZLEN()const{ return (ZLEN); }
-    int getXLENprev()const{ return restartState_->get_XLEN_prev(); }
-    int getYLENprev()const{ return restartState_->get_YLEN_prev(); }
-    int getZLENprev()const{ return restartState_->get_ZLEN_prev(); }
-    //const RestartState& getRestartState() const { return restartState_; }
+    int getXLENprev()const{ return restartManager_->get_XLEN_prev(); }
+    int getYLENprev()const{ return restartManager_->get_YLEN_prev(); }
+    int getZLENprev()const{ return restartManager_->get_ZLEN_prev(); }
+    //const RestartManager& getRestartManager() const { return restartManager_; }
     bool getPERIODICX()const{ return (PERIODICX); }
     bool getPERIODICY()const{ return (PERIODICY); }
     bool getPERIODICZ()const{ return (PERIODICZ); }
@@ -412,7 +407,7 @@ class Collective
 
     /*! Encapsulates all restart I/O logic: topology reading, validation,
      *  field and particle reading from checkpoint files. */
-    std::unique_ptr<RestartState> restartState_;
+    std::unique_ptr<RestartManager> restartManager_;
 
     /*! velocity of the injection from the wall */
     double Vinj;

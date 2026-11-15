@@ -473,30 +473,20 @@ void Collective::ReadInput(string inputfile) {
   bcPfaceZright = config.read < int >("bcPfaceZright",1);
   bcPfaceZleft  = config.read < int >("bcPfaceZleft",1);
 
-#ifndef NO_HDF5 
+#ifndef NO_HDF5
   if (RESTART1) {               // you are restarting
-    //this function is to fix
     RestartDirName = config.read < string > ("RestartDirName","data");
     RestartSaveDirName = config.read < string > ("RestartSaveDirName", RestartDirName);
-    restartState_ = std::make_unique<RestartState>(RestartDirName);
 
-    if (restartState_->read_old_topology() == -1) {
-      eprintf("Unable to read restart metadata from %s/settings.hdf\n",
-              RestartDirName.c_str());
-      MPIdata::exit(1);
-    };
-
-    if (restartState_->validate_new_topology(XLEN, YLEN, ZLEN) == -1) {
-      eprintf("Invalid restart topology: source is %dx%dx%d, requested is %dx%dx%d\n",
-              restartState_->get_XLEN_prev(), restartState_->get_YLEN_prev(),
-              restartState_->get_ZLEN_prev(), XLEN, YLEN, ZLEN);
+    // read the old topology/grid from settings.hdf and the last cycle from
+    // the restart file, then create the RestartManager with the full state
+    if (read_from_settings() < 0) {
+      eprintf("Failed to read restart data from %s\n", RestartDirName.c_str());
       MPIdata::exit(1);
     }
-    int curr_proc = getXLEN() * getYLEN() * getZLEN();
-    int prev_proc = getXLENprev() * getYLENprev() * getZLENprev();
-    restartState_->determineResizeMode()
+
     restart_status = 1;
-    last_cycle = restartState_->read_last_cycle();
+    // last_cycle is set by read_from_settings()
   }
 #endif
 }
@@ -515,11 +505,7 @@ bool Collective::testparticle_output_is_off()const
   return getTestParticlesOutputCycle() <= 0;
 }
 
-/*! Read the collective information from the RESTART file in HDF5 format
- * There are three restart status: restart_status = 0 ---> new inputfile
- * restart_status = 1 ---> RESTART and restart and result directories does not coincide
- * restart_status = 2 ---> RESTART and restart and result directories coincide */
-int Collective::ReadRestart(string inputfile) {
+
 #ifdef NO_HDF5
   eprintf("restart requires compiling with HDF5");
 #else
@@ -817,7 +803,6 @@ int Collective::ReadRestart(string inputfile) {
 }
 
 
-
 void Collective::read_field_restart(
     const VCtopology3D* vct,
     const Grid* grid,
@@ -828,10 +813,10 @@ void Collective::read_field_restart(
 #ifdef NO_HDF5
   eprintf("Require HDF5 to read from restart file.");
 #else
-  restartState_->read_field_restart(vct, grid, 
-                                    Bxn, Byn, Bzn, 
-                                    Ex, Ey, Ez, 
-                                    rhons_, ns);
+  restartManager_->read_field_restart(vct, grid,
+                                      Bxn, Byn, Bzn,
+                                      Ex, Ey, Ez,
+                                      rhons_, ns);
 #endif
 }
 
@@ -845,10 +830,10 @@ void Collective::read_particles_restart(
 #ifdef NO_HDF5
   eprintf("Require HDF5 to read from restart file.");
 #else
-    restartState_->read_particles_restart(vct, species_number,
-                                           u, v, w,
-                                           q, x, y,
-                                           z, t);
+    restartManager_->read_particles_restart(vct, species_number,
+                                             u, v, w,
+                                             q, x, y,
+                                             z, t);
 #endif
 }
 
@@ -947,6 +932,120 @@ void Collective::init_derived_parameters()
     //double npMaxi = (NpMaxNpRatio * np[i]);
     //npMax[i] = (int) npMaxi;
   }
+}
+
+/*! Read from the settings file the past execution: old topology and grid
+ *  from settings.hdf, last cycle from the rank-0 restart file. Builds the
+ *  RestartState and creates the RestartManager with it. */
+int Collective::read_from_settings() {
+  #ifdef NO_HDF5
+    eprintf("restart requires compiling with HDF5");
+    return -1;
+#else
+    hid_t file_id;
+    hid_t dataset_id;
+    herr_t status;
+
+    int pastXLEN, pastYLEN, pastZLEN;
+    int nc_prev[3];
+
+    // 1. read the old topology and grid size from the settings file
+    file_id = H5Fopen((RestartDirName + "/settings.hdf").c_str(), H5F_ACC_RDONLY, H5P_DEFAULT);
+    if (file_id < 0) {
+        cerr << "Unable to open restart settings file: "
+             << RestartDirName << "/settings.hdf" << endl;
+        return -1;
+    }
+
+    // read old XLEN
+    dataset_id = H5Dopen2(file_id, "/topology/XLEN", H5P_DEFAULT);
+    status = H5Dread(dataset_id, H5T_NATIVE_INT, H5S_ALL, H5S_ALL, H5P_DEFAULT, &pastXLEN);
+    status = H5Dclose(dataset_id);
+
+    // read old YLEN
+    dataset_id = H5Dopen2(file_id, "/topology/YLEN", H5P_DEFAULT);
+    status = H5Dread(dataset_id, H5T_NATIVE_INT, H5S_ALL, H5S_ALL, H5P_DEFAULT, &pastYLEN);
+    status = H5Dclose(dataset_id);
+
+    // read old ZLEN
+    dataset_id = H5Dopen2(file_id, "/topology/ZLEN", H5P_DEFAULT);
+    status = H5Dread(dataset_id, H5T_NATIVE_INT, H5S_ALL, H5S_ALL, H5P_DEFAULT, &pastZLEN);
+    status = H5Dclose(dataset_id);
+
+    // read old number of cells in each direction
+    dataset_id = H5Dopen2(file_id, "/collective/Nxc", H5P_DEFAULT);
+    status = H5Dread(dataset_id, H5T_NATIVE_INT, H5S_ALL, H5S_ALL, H5P_DEFAULT, &nc_prev[0]);
+    status = H5Dclose(dataset_id);
+
+    dataset_id = H5Dopen2(file_id, "/collective/Nyc", H5P_DEFAULT);
+    status = H5Dread(dataset_id, H5T_NATIVE_INT, H5S_ALL, H5S_ALL, H5P_DEFAULT, &nc_prev[1]);
+    status = H5Dclose(dataset_id);
+
+    dataset_id = H5Dopen2(file_id, "/collective/Nzc", H5P_DEFAULT);
+    status = H5Dread(dataset_id, H5T_NATIVE_INT, H5S_ALL, H5S_ALL, H5P_DEFAULT, &nc_prev[2]);
+    status = H5Dclose(dataset_id);
+
+    status = H5Fclose(file_id);
+
+    // 2. read the last cycle from the rank-0 restart file, before the
+    //    RestartManager is constructed
+    stringstream ss;
+    ss << RestartDirName << "/restart_x"
+       << setw(3) << setfill('0') << 0 << "_y"
+       << setw(3) << setfill('0') << 0 << "_z"
+       << setw(3) << setfill('0') << 0 << ".hdf";
+    const string restart_file = ss.str();
+
+    file_id = H5Fopen(restart_file.c_str(), H5F_ACC_RDONLY, H5P_DEFAULT);
+    if (file_id < 0) {
+        cerr << "Unable to open restart file: " << restart_file << endl;
+        return -1;
+    }
+
+    last_cycle = -1;
+    dataset_id = H5Dopen2(file_id, "/last_cycle", H5P_DEFAULT);
+    if (dataset_id >= 0) {
+        status = H5Dread(dataset_id, H5T_NATIVE_INT, H5S_ALL, H5S_ALL, H5P_DEFAULT, &last_cycle);
+        status = H5Dclose(dataset_id);
+    }
+    status = H5Fclose(file_id);
+
+    if (last_cycle < 0) {
+        cerr << "Unable to read /last_cycle from " << restart_file << endl;
+        return -1;
+    }
+
+    // 3. assemble the RestartState and create the RestartManager with it
+    //    both topologies must divide the grid evenly, otherwise the
+    //    intersection of old and new subdomains is not cell-aligned
+    if (nc_prev[0] % pastXLEN || nc_prev[1] % pastYLEN || nc_prev[2] % pastZLEN ||
+        nxc % XLEN || nyc % YLEN || nzc % ZLEN) {
+        cerr << "Grid (" << nc_prev[0] << "," << nc_prev[1] << "," << nc_prev[2]
+             << ") is not divisible by the old topology (" << pastXLEN << ","
+             << pastYLEN << "," << pastZLEN << ") or the new one (" << XLEN
+             << "," << YLEN << "," << ZLEN << ")" << endl;
+        return -1;
+    }
+
+    RestartManager::RestartState state;
+    state.nc[0]      = nc_prev[0];
+    state.nc[1]      = nc_prev[1];
+    state.nc[2]      = nc_prev[2];
+    state.pastLEN[0] = pastXLEN;
+    state.pastLEN[1] = pastYLEN;
+    state.pastLEN[2] = pastZLEN;
+    state.currLEN[0] = XLEN;   // new topology, read from the input file
+    state.currLEN[1] = YLEN;
+    state.currLEN[2] = ZLEN;
+    state.last_cycle = last_cycle;
+    state.L[0]       = Lx;     // physical box lengths, for particle checks
+    state.L[1]       = Ly;
+    state.L[2]       = Lz;
+
+    restartManager_ = std::make_unique<RestartManager>(RestartDirName, state);
+
+    return 0;
+#endif
 }
 
 /*! Print Simulation Parameters */
