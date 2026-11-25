@@ -1,0 +1,120 @@
+# MASTER INPUT for the restart-repartition test - minimal 1D thermal plasma
+# 2 species. The test script (test_restart_repartition.sh) generates the
+# per-stage inputs from this file by overriding SaveDirName / RestartDirName /
+# RestartSaveDirName / XLEN / ncycles / output cycles. Do not run this file
+# directly.
+
+#  %%%%%%%%%%%%%%%%%%% Input/Output flags %%%%%%%%%%%%%%%%%%
+SaveDirName        = data        # overridden per stage
+RestartDirName     = data        # overridden per stage
+RestartSaveDirName = data        # overridden per stage
+
+Case              = default
+WriteMethod       = shdf5       # single HDF5 file per proc (proc*.hdf + settings.hdf)
+FieldOutputTag    = Eall + Ball + Jall + rhos + pressure
+MomentsOutputTag  = Eall + Ball + Jall + rhos + pressure
+ParticlesOutputTag = position + velocity + q
+PoissonCorrection = no
+SimulationName    = data
+
+#  %%%%%%%%%%%%%%%%%%% Magnetic Reconnection %%%%%%%%%%%%%%%%%%
+B0x = 0.00
+B0y = 0.00
+B0z = 0.00
+B1x = 0.000
+B1y = 0.000
+B1z = 0.000
+delta = 0.5
+
+#  %%%%%%%%%%%%%%%%%%% TIME %%%%%%%%%%%%%%%%%%
+dt = 0.05
+ncycles = 40            # baseline length; stages override (20)
+th = 1.0
+c = 1.0
+
+#  %%%%%%%%%%%%%%%%%%% SMOOTH %%%%%%%%%%%%%%%%%%
+Smooth = 0.5
+NVolte = 6
+
+# %%%%%%%%%%%%%%%%%% BOX SIZE %%%%%%%%%%%%%%%%%
+Lx =  10.0
+Ly =  1.0
+Lz =  1.0
+
+x_center = 1.
+y_center = 1.
+z_center = 1.
+L_square = .1
+
+CoilD = 25.2
+CoilSpacing = 40.0
+
+nxc =  64   # must be divisible by XLEN for XLEN = 2,4,8
+nyc =  1
+nzc =  1
+
+# %%%%%%%%%%%%%%%%%% MPI TOPOLOGY %%%%%%%%%%%%%%%%%
+XLEN = 2    # baseline topology; stages override (2, 4 or 8)
+YLEN = 1
+ZLEN = 1
+
+# %%%%%%%%%%%%%% PARTICLES %%%%%%%%%%%%%%%%%
+ns = 2
+rhoINIT         = 1.0  1.0
+rhoINJECT       = 0.0  0.0
+TrackParticleID = 0    0
+
+npcelx          = 100  100
+npcely          = 1    1
+npcelz          = 1    1
+NpMaxNpRatio    = 3.0
+
+qom             = -64.0  1.0
+uth             =  0.1   0.01
+vth             =  0.0   0.0
+wth             =  0.0   0.0
+u0              =  0.0   0.0
+v0              =  0.0   0.0
+w0              =  0.0   0.0
+
+# %%%%%%%%%%%%%% TEST PARTICLES %%%%%%%%%%%%%%%%%
+TP_ns = 0
+
+# %%%%%%%%%%%% Periodicity in each direction %%%%%%%%%%%%%%%%
+PERIODICX = 1
+PERIODICY = 1
+PERIODICZ = 1
+
+# %%%%%%%%%%%% boundary conditions %%%%%%%%%%%%%%%
+bcPHIfaceXright = 1
+bcPHIfaceXleft  = 1
+bcPHIfaceYright = 1
+bcPHIfaceYleft  = 1
+bcPHIfaceZright = 1
+bcPHIfaceZleft  = 1
+
+bcEMfaceXright = 0
+bcEMfaceXleft  = 0
+bcEMfaceYright = 0
+bcEMfaceYleft  = 0
+bcEMfaceZright = 0
+bcEMfaceZleft  = 0
+
+bcPfaceXright = 1
+bcPfaceXleft  = 1
+bcPfaceYright = 1
+bcPfaceYleft  = 1
+bcPfaceZright = 1
+bcPfaceZleft  = 1
+
+# %%%%%%%%%%%% Numerics options %%%%%%%%%%%%%%%
+verbose                = 1
+Vinj                   = 0.0
+CGtol                  = 1E-3
+GMREStol               = 1E-6
+NiterMover             = 3
+FieldOutputCycle       = 5
+ParticlesOutputCycle   = 0
+RestartOutputCycle     = 20
+DiagnosticsOutputCycle = 5
+CallFinalize           = 0   # baseline writes its checkpoint via RestartOutputCycle only

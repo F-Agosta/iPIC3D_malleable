@@ -1,0 +1,131 @@
+# MASTER INPUT for the restart-repartition test - two-stream instability (1D, x)
+# Derived from inputfiles/two_stream.inp. The original file declared ns = 4 but
+# provided only 3 values for the per-species arrays (npcel*, qom, u0, ...);
+# it is made consistent here as a neutral counter-streaming electron-positron
+# plasma (2 species, qom = -1/+1, u0 = +/-0.2, rho = 0.5 each).
+# Adapted for the malleable restart test:
+#   - nxc = 64 (must be divisible by XLEN = 2,4,8); dt reduced to 0.02 so that
+#     c*dt/dx < 1 at this resolution
+#   - repartitioning only in x: YLEN = ZLEN = 1, XLEN = 2 (baseline)
+#   - WriteMethod = shdf5 so runs produce proc*.hdf + settings.hdf (read_hdf.py)
+# The test script (test_restart_repartition.sh) generates the per-stage inputs
+# from this file by overriding SaveDirName / RestartDirName / RestartSaveDirName
+# / XLEN / ncycles / output cycles. Do not run this file directly.
+
+#  %%%%%%%%%%%%%%%%%%% Input/Output flags %%%%%%%%%%%%%%%%%%
+SaveDirName        = data        # overridden per stage
+RestartDirName     = data        # overridden per stage
+RestartSaveDirName = data        # overridden per stage
+
+Case              = default
+WriteMethod       = shdf5
+FieldOutputTag    = Eall + Ball + Jall + rhos + pressure
+MomentsOutputTag  = Eall + Ball + Jall + rhos + pressure
+ParticlesOutputTag = position + velocity + q
+PoissonCorrection = no
+SimulationName    = data
+
+#  %%%%%%%%%%%%%%%%%%% Magnetic Reconnection %%%%%%%%%%%%%%%%%%
+B0x = 0.00
+B0y = 0.00
+B0z = 0.00
+
+B1x = 0.000
+B1y = 0.000
+B1z = 0.000
+
+delta = 0.5
+
+#  %%%%%%%%%%%%%%%%%%% TIME %%%%%%%%%%%%%%%%%%
+dt = 0.02
+ncycles = 40            # baseline length; stages override (20)
+th = 1.0
+c = 1.0
+
+#  %%%%%%%%%%%%%%%%%%% SMOOTH %%%%%%%%%%%%%%%%%%
+Smooth = 0.5
+NVolte = 6
+
+# %%%%%%%%%%%%%%%%%% BOX SIZE %%%%%%%%%%%%%%%%%
+Lx =  6.0
+Ly =  1.0
+Lz =  1.0
+
+x_center = 1.
+y_center = 1.
+z_center = 1.
+L_square = .1
+
+CoilD = 25.2
+CoilSpacing = 40.0
+
+nxc =  64   # must be divisible by XLEN for XLEN = 2,4,8
+nyc =  1
+nzc =  1
+
+# %%%%%%%%%%%%%%%%%% MPI TOPOLOGY %%%%%%%%%%%%%%%%%
+XLEN = 2    # baseline topology; stages override (2, 4 or 8)
+YLEN = 1
+ZLEN = 1
+
+# %%%%%%%%%%%%%% PARTICLES %%%%%%%%%%%%%%%%%
+#    0 = electrons (beam +x) ; 1 = positrons (beam -x)
+ns = 2
+rhoINIT         = 0.5  0.5
+rhoINJECT       = 0.0  0.0
+TrackParticleID = 0    0
+
+npcelx          = 100  100
+npcely          = 1    1
+npcelz          = 1    1
+NpMaxNpRatio    = 5.0
+
+qom             = -1.0   1.0
+uth             =  0.04  0.04
+vth             =  0.04  0.04
+wth             =  0.04  0.04
+u0              =  0.20 -0.20
+v0              =  0.0   0.0
+w0              =  0.0   0.0
+
+# %%%%%%%%%%%%%% TEST PARTICLES %%%%%%%%%%%%%%%%%
+TP_ns = 0
+
+# %%%%%%%%%%%% Periodicity in each direction %%%%%%%%%%%%%%%%
+PERIODICX = 1
+PERIODICY = 1
+PERIODICZ = 1
+
+# %%%%%%%%%%%% boundary conditions %%%%%%%%%%%%%%%
+bcPHIfaceXright = 1
+bcPHIfaceXleft  = 1
+bcPHIfaceYright = 1
+bcPHIfaceYleft  = 1
+bcPHIfaceZright = 1
+bcPHIfaceZleft  = 1
+
+bcEMfaceXright = 0
+bcEMfaceXleft  = 0
+bcEMfaceYright = 0
+bcEMfaceYleft  = 0
+bcEMfaceZright = 0
+bcEMfaceZleft  = 0
+
+bcPfaceXright = 1
+bcPfaceXleft  = 1
+bcPfaceYright = 1
+bcPfaceYleft  = 1
+bcPfaceZright = 1
+bcPfaceZleft  = 1
+
+# %%%%%%%%%%%% Numerics options %%%%%%%%%%%%%%%
+verbose                = 1
+Vinj                   = 0.0
+CGtol                  = 1E-3
+GMREStol               = 1E-6
+NiterMover             = 3
+FieldOutputCycle       = 5
+ParticlesOutputCycle   = 0
+RestartOutputCycle     = 20
+DiagnosticsOutputCycle = 5
+CallFinalize           = 0   # baseline writes its checkpoint via RestartOutputCycle only

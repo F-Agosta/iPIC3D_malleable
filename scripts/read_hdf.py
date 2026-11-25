@@ -1,181 +1,240 @@
-import scipy
+#!/usr/bin/env python3
+"""
+Read and reassemble iPIC3D shdf5 output (proc*.hdf / restart_x*.hdf + settings.hdf)
+and plot or compare grid fields.
+
+Each proc file stores its subdomain of a quantity under
+    /<group>/<comp>/cycle_<N>        e.g. /fields/Ez/cycle_20
+plus /topology/cartesian_coord with the proc's coordinates in the domain
+decomposition. Reading ALL proc files and placing each subdomain at
+coord*(cells_per_proc) reassembles the full global grid, independent of how
+many processes the run used -- this is what makes runs with different MPI
+topologies (e.g. after a repartitioning restart) directly comparable.
+
+Usage:
+  plot a field over a cycle range (default: all cycles present):
+    read_hdf.py --directory runs/weibel/save/baseline-2 --group fields --comp Ez
+  compare the same field at the same cycle between two runs:
+    read_hdf.py --directory runs/weibel/save/restart-same-2 \
+                --compare runs/weibel/save/restart-2-to-4 \
+                --cycle 40 --group fields --comp Ez --tol 1e-8 \
+                --out-prefix verify_2to4_
+  inspect a restart checkpoint directory instead of a save directory:
+    read_hdf.py --directory runs/weibel/restart/baseline-2 --glob 'restart_*.hdf' ...
+
+Compare mode exits with code 1 if max|A-B|/max|A| exceeds --tol.
+"""
+
+import argparse
+import glob
+import os
+import sys
+
 import numpy as np
 import tables
+import matplotlib
+matplotlib.use("Agg")
 from matplotlib import pyplot as plt
 
-# Directory of the simulation data
-directory = 'data/'
-# Which quantities to process
-data_read = {'Fields': True, 'Currents': True, 'Rho': True, 'Pressure': True}
-# Which cycles to process
-first_cycle = 0
-last_cycle = 6001
-step = 60
 
-#ezxp = []
+# ---------------------------------------------------------------------------
+# reading
+# ---------------------------------------------------------------------------
 
-def openProcFile(proc_filename, read_proc0, bounds):
-    """Open single proc*.hdf file and return its handler
+def read_settings(directory):
+    setting_filename = os.path.join(directory, "settings.hdf")
+    with tables.open_file(setting_filename, mode="r", title="Setting_file") as h5:
+        s = {
+            "Nprocs": int(h5.root.topology.Nprocs.read()[0]),
+            "XLEN": int(h5.root.topology.XLEN.read()[0]),
+            "YLEN": int(h5.root.topology.YLEN.read()[0]),
+            "ZLEN": int(h5.root.topology.ZLEN.read()[0]),
+            "dx": float(h5.root.collective.Dx.read()[0]),
+            "dy": float(h5.root.collective.Dy.read()[0]),
+            "dz": float(h5.root.collective.Dz.read()[0]),
+            "Nxc": int(h5.root.collective.Nxc.read()[0]),
+            "Nyc": int(h5.root.collective.Nyc.read()[0]),
+            "Nzc": int(h5.root.collective.Nzc.read()[0]),
+            "Ns": int(h5.root.collective.Ns.read()[0]),
+        }
+    return s
 
-       Parameters
-         proc_filename - name of the input proc*hdf file
-         read_proc0 == list_read_proc[0], the bottom processor layer index. See below.
-         bounds - oordinates of the edges of the domain saved in the proc file
+
+def proc_files(directory, proc_glob):
+    files = sorted(glob.glob(os.path.join(directory, proc_glob)))
+    if not files:
+        raise FileNotFoundError(
+            f"No files matching '{proc_glob}' in '{directory}'"
+        )
+    return files
+
+
+def cycle_of_node(node):
+    # dataset names look like "cycle_20"
+    return int(node.name.split("_")[-1])
+
+
+def available_cycles(directory, group, comp, proc_glob):
+    files = proc_files(directory, proc_glob)
+    cycles = set()
+    with tables.open_file(files[0], mode="r") as h5:
+        for node in h5.walk_nodes(f"/{group}/{comp}"):
+            if isinstance(node, tables.Array):
+                cycles.add(cycle_of_node(node))
+    return sorted(cycles)
+
+
+def read_field(directory, group, comp, cycle, proc_glob):
     """
-    try :
-        h5proc_file = tables.open_file(proc_filename, mode = "r", title = "Proc_file")
-        p_coordinate = h5proc_file.root.topology.cartesian_coord.read()
-    except :
-        print('Error opening proc file: ', proc_filename)
+    Reassemble the full global grid of /<group>/<comp>/cycle_<cycle>
+    from all proc files in `directory`. Returns a float32 array of
+    shape (Nxc+1, Nyc+1, Nzc+1).
+    """
+    s = read_settings(directory)
+    shape = (s["Nxc"] // s["XLEN"] + 1,
+             s["Nyc"] // s["YLEN"] + 1,
+             s["Nzc"] // s["ZLEN"] + 1)
+    field = np.zeros((s["Nxc"] + 1, s["Nyc"] + 1, s["Nzc"] + 1), dtype="float32")
 
-    p_coordinate[2] = p_coordinate[2] - read_proc0
-    bounds[0] = p_coordinate[0]*(shape[0]-1) # x_start -1 to account for the 1 node overlapping
-    bounds[1] = bounds[0] + shape[0]           # x_end
-    bounds[2] = p_coordinate[1]*(shape[1]-1) # y_start
-    bounds[3] = bounds[2] + shape[1]           # y_end
-    bounds[4] = p_coordinate[2]*(shape[2]-1) # z_start
-    bounds[5] = bounds[4] + shape[2]           # z_end
-    return h5proc_file
-#end openProcFile
+    found = False
+    for proc_filename in proc_files(directory, proc_glob):
+        with tables.open_file(proc_filename, mode="r", title="Proc_file") as h5:
+            coord = h5.root.topology.cartesian_coord.read()
+            x0 = int(coord[0]) * (shape[0] - 1)
+            y0 = int(coord[1]) * (shape[1] - 1)
+            z0 = int(coord[2]) * (shape[2] - 1)
+            for node in h5.walk_nodes(f"/{group}/{comp}"):
+                if isinstance(node, tables.Array) and cycle_of_node(node) == cycle:
+                    field[x0:x0 + shape[0], y0:y0 + shape[1], z0:z0 + shape[2]] = node.read()
+                    found = True
+    if not found:
+        avail = available_cycles(directory, group, comp, proc_glob)
+        raise ValueError(
+            f"Cycle {cycle} not found for /{group}/{comp} in '{directory}'. "
+            f"Available: {avail}"
+        )
+    return field
 
-""" Constants """
-str_fields = 'fields'
-str_rho = 'rho'
-str_currents = 'currents'
-str_pressure = 'pressure'
-str_moments = 'moments'
-str_species = 'species_'
-current_comp_names = ['Jx', 'Jy', 'Jz']
-field_comp_names = ['Bx', 'By', 'Bz', 'Ex', 'Ey', 'Ez']
-field_comp_count = len(field_comp_names)
-field_vec_names = ['B', 'E']
-current_vec_name = 'J'
-press_names = ['pXX', 'pXY', 'pXZ', 'pYY', 'pYZ', 'pZZ']
-press_comp_count = len(press_names)
-list_cycle = np.arange(first_cycle, last_cycle+1, step).tolist()
-bounds = np.zeros(6) # local domain bounds: x_start, x_end, y_start, ...
 
-setting_filename = directory + "settings.hdf" # Setting file name
-h5setting_file = tables.open_file(setting_filename, mode = "r", title = "Setting_file")
-Nprocs = h5setting_file.root.topology.Nprocs.read()[0]
-XLEN = h5setting_file.root.topology.XLEN.read()[0]
-YLEN = h5setting_file.root.topology.YLEN.read()[0]
-ZLEN = h5setting_file.root.topology.ZLEN.read()[0]
-dx = h5setting_file.root.collective.Dx.read()[0]
-dy = h5setting_file.root.collective.Dy.read()[0]
-dz = h5setting_file.root.collective.Dz.read()[0]
-Nxc = h5setting_file.root.collective.Nxc.read()[0]
-Nyc = h5setting_file.root.collective.Nyc.read()[0]
-Nzc = h5setting_file.root.collective.Nzc.read()[0]
-ns = h5setting_file.root.collective.Ns.read()[0]
-b0x = h5setting_file.root.collective.Bx0.read()[0]
-h5setting_file.close()
-# Shape of each individual subdomain. We assume that each processor has domain of the same size!
-shape = (Nxc/XLEN+1, Nyc/YLEN+1, Nzc/ZLEN+1)
-species = range(ns)
+# ---------------------------------------------------------------------------
+# plotting
+# ---------------------------------------------------------------------------
 
-numproc = 1
-rankproc = 0
-Zbyproc = ZLEN/numproc # Minimum Nomber of Z you have to read
-reste = ZLEN - Zbyproc*numproc
-if rankproc < reste:
-    Zrange = np.arange(rankproc*(Zbyproc+1),(rankproc+1)*(Zbyproc+1))
-else:
-    Zrange = np.arange(reste*(Zbyproc+1)+(rankproc-reste)*Zbyproc, reste*(Zbyproc+1)+(rankproc-reste+1)*Zbyproc)
+def plot_field(field, comp, cycle, zindex, out_prefix, vmin, vmax):
+    slice2d = np.transpose(field[:, :, zindex])  # x on the horizontal axis
+    fig = plt.figure()
+    ax = fig.add_subplot(111)
+    cc = ax.imshow(slice2d, cmap="seismic", vmin=vmin, vmax=vmax,
+                   interpolation="antialiased", origin="lower")
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
+    cbar = fig.colorbar(cc)
+    cbar.set_label(comp)
+    out = f"{out_prefix}{comp}_{str(cycle).zfill(6)}.png"
+    fig.savefig(out)
+    plt.close(fig)
+    print(f"Saved {out}")
 
-list_read_proc = []
-print(Zrange)
-for Z in Zrange:
-    print(type(Z), type(Nprocs), type(ZLEN))
-    list_read_proc.extend(range(np.int32(Z),Nprocs,ZLEN))
 
-list_read_proc = np.array(list_read_proc)
-zread_proc = len(list_read_proc)/(YLEN*XLEN) #Number of proc file you want to read in the z direction
+def plot_range(directory, args):
+    cycles = available_cycles(directory, args.group, args.comp, args.glob)
+    if args.first_cycle is not None or args.last_cycle is not None:
+        lo = args.first_cycle if args.first_cycle is not None else cycles[0]
+        hi = args.last_cycle if args.last_cycle is not None else cycles[-1]
+        cycles = [c for c in cycles if lo <= c <= hi]
+    step = args.step or 1
+    cycles = cycles[::step]
+    if not cycles:
+        print(f"No cycles to plot for /{args.group}/{args.comp} in {directory}")
+        return
+    for cycle in cycles:
+        field = read_field(directory, args.group, args.comp, cycle, args.glob)
+        plot_field(field, args.comp, cycle, args.zindex, args.out_prefix,
+                   args.vmin, args.vmax)
 
-Nzlocal = zread_proc*(shape[2] - 1)
-print(type(field_comp_count), type(Nxc), type(Nyc), type(Nzlocal))
-Fields_local = np.zeros((field_comp_count,Nxc+1,Nyc+1,np.int32(Nzlocal)+1), dtype="float32")
-numproc = min(numproc, ZLEN) # To account for specific case where more processors are used here than in the Z direction of the simulation
-if len(list_read_proc) > 0:
-    numpoints = (Nxc+1)*(Nyc+1)*(Nzlocal+1)
-    RangeZlocal = rankproc*Nzc/numproc, (rankproc+1)*Nzc/numproc
-    Xcoordinates = np.arange(Nxc+1).flatten().astype('float32')*dx
-    Ycoordinates = np.arange(Nyc+1).flatten().astype('float32')*dy
-    Zcoordinates = (np.arange(Nzlocal+1).flatten().astype('float32') + list_read_proc[0]*(shape[2]-1))*dz
-    '''vtkXcoordinates = vtk.vtkFloatArray()
-    vtkXcoordinates.SetNumberOfComponents(1)
-    vtkXcoordinates.SetNumberOfTuples(Nxc+1)
-    vtkXcoordinates.SetVoidArray(Xcoordinates,Nxc+1,1)
-    vtkYcoordinates = vtk.vtkFloatArray()
-    vtkYcoordinates.SetNumberOfComponents(1)
-    vtkYcoordinates.SetNumberOfTuples(Nyc+1)
-    vtkYcoordinates.SetVoidArray(Ycoordinates,Nyc+1,1)
-    vtkZcoordinates = vtk.vtkFloatArray()
-    vtkZcoordinates.SetNumberOfComponents(1)
-    vtkZcoordinates.SetNumberOfTuples(Nzlocal+1)
-    vtkZcoordinates.SetVoidArray(Zcoordinates,Nzlocal+1,1)'''
-    list_proc_files = []
-    for read_proc in list_read_proc:
-        list_proc_files.append(directory + "proc" + repr(read_proc) + ".hdf")
 
-    """ 1. Fields: magnetic and electric """
-    if data_read['Fields']:
-        for cycle in list_cycle:
-            print(cycle)
-            for proc_filename in list_proc_files:
-                h5proc_file = openProcFile(proc_filename, list_read_proc[0], bounds)
-                ## Cycle over field components
-                for c in range(field_comp_count):
-                    for node in h5proc_file.walk_nodes('/' + str_fields + '/'+ field_comp_names[c]):
-                        if type(node) == tables.array.Array:
-                            num = int(node.name[6:])
-                            if num == cycle:
-                                ###print(type(c), type(bounds[0]))
-                                Fields_local[c, np.int32(bounds[0]):np.int32(bounds[1]), np.int32(bounds[2]):np.int32(bounds[3]), np.int32(bounds[4]):np.int32(bounds[5])] = node.read()
-                        #end if
-                    #end for
-                #end for
-                h5proc_file.close()
-            #end for
-            vector_fields = {}
-            for c in range(len(field_vec_names)):
-                if field_vec_names[c] == 'E':
-                   print(field_vec_names[c])
-                   vector_fields[field_vec_names[c]] = Fields_local[3*c:3*(c+1), :, :, :]
-                   print(type(vector_fields[field_vec_names[c]]))
-                   print(vector_fields[field_vec_names[c]].shape)
-                   field = np.transpose(vector_fields[field_vec_names[c]][2,:,:,0]) 
-                   ixp = Nxc/4
-                   iyp = Nyc/4
-                   #ezxp.append(field[3*int(iyp),3*int(ixp)])
-                   fig = plt.figure()
-                   ax = fig.add_subplot(111)
+# ---------------------------------------------------------------------------
+# comparison
+# ---------------------------------------------------------------------------
 
-                   cc = ax.imshow(
-                     field,
-                     cmap='seismic',
-                     ###extent=[xmin, xmax, ymin, ymax],
-                     vmin=-0.006,
-                     vmax=0.006,
-                     interpolation='antialiased',
-                     origin='lower'
-                     )
-                   ax.set_xlabel("x", fontsize=20)
-                   ax.set_ylabel("y", fontsize=20)
-                   ax.tick_params(labelsize=20)
-                   cbar = fig.colorbar(cc)
-                   cbar.set_label(field_vec_names[c], fontsize=20)
-                   cbar.ax.tick_params(labelsize=20)
+def compare_directories(dir_a, dir_b, args):
+    fa = read_field(dir_a, args.group, args.comp, args.cycle, args.glob)
+    fb = read_field(dir_b, args.group, args.comp, args.cycle, args.glob)
+    if fa.shape != fb.shape:
+        print(f"FAIL: grid shapes differ: {dir_a} {fa.shape} vs {dir_b} {fb.shape}",
+              file=sys.stderr)
+        return 1
+    diff = np.abs(fa - fb)
+    max_abs = float(diff.max())
+    denom = float(np.abs(fa).max())
+    rel = max_abs / denom if denom > 0 else max_abs
+    ok = rel <= args.tol
+    print(f"Compare /{args.group}/{args.comp} at cycle {args.cycle}")
+    print(f"  A (reference): {dir_a}  shape={fa.shape}")
+    print(f"  B (test)     : {dir_b}  shape={fb.shape}")
+    print(f"  max|A-B|        = {max_abs:.3e}")
+    print(f"  max|A-B|/max|A| = {rel:.3e}   (tol={args.tol:g})")
+    print(f"  {'OK' if ok else 'FAIL'}")
 
-                   #fig.tight_layout()
+    # side-by-side figure: reference, test, difference
+    z = args.zindex
+    fig, axes = plt.subplots(1, 3, figsize=(15, 4))
+    for ax, data, title in (
+        (axes[0], fa[:, :, z].T, f"A {args.comp}"),
+        (axes[1], fb[:, :, z].T, f"B {args.comp}"),
+        (axes[2], diff[:, :, z].T, "|A-B|"),
+    ):
+        cc = ax.imshow(data, cmap="seismic", origin="lower",
+                       interpolation="antialiased")
+        ax.set_title(title)
+        fig.colorbar(cc, ax=ax)
+    out = f"{args.out_prefix}compare_{args.comp}_{str(args.cycle).zfill(6)}.png"
+    fig.savefig(out)
+    plt.close(fig)
+    print(f"Saved {out}")
+    return 0 if ok else 1
 
-                   plt.savefig(field_vec_names[c] + "_" + (str(cycle)).zfill(6) + ".png", format='png')
 
-#f = open("ezxp.txt", "w")
-#for item in ezxp:
-#   f.write(str(item) +"\n")
-#f.close()
+# ---------------------------------------------------------------------------
+# main
+# ---------------------------------------------------------------------------
 
-#fig = plt.figure()
-#plt.plot(ezxp/b0x**2)
-#plt.savefig("Ezxp.png", format='png')
+def main():
+    p = argparse.ArgumentParser(description=__doc__,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--directory", default="data/",
+                   help="directory with settings.hdf and proc/restart hdf files")
+    p.add_argument("--compare", metavar="DIR_B",
+                   help="second run directory to compare against --directory")
+    p.add_argument("--glob", default="proc*.hdf",
+                   help="proc file pattern (use 'restart_*.hdf' for checkpoint dirs)")
+    p.add_argument("--group", default="fields", help="hdf group, e.g. fields, moments, moments/species_0")
+    p.add_argument("--comp", default="Ez", help="component, e.g. Ez, Bz, Jx, rho, pXX")
+    p.add_argument("--cycle", type=int, default=None,
+                   help="cycle for --compare (required) or to restrict plotting to")
+    p.add_argument("--first-cycle", type=int, default=None)
+    p.add_argument("--last-cycle", type=int, default=None)
+    p.add_argument("--step", type=int, default=None)
+    p.add_argument("--zindex", type=int, default=0, help="z slice to plot")
+    p.add_argument("--tol", type=float, default=1e-8, help="max relative difference in compare mode")
+    p.add_argument("--out-prefix", default="", help="prefix for output png files")
+    p.add_argument("--vmin", type=float, default=None)
+    p.add_argument("--vmax", type=float, default=None)
+    args = p.parse_args()
+
+    if args.compare:
+        if args.cycle is None:
+            print("--compare requires --cycle", file=sys.stderr)
+            sys.exit(2)
+        sys.exit(compare_directories(args.directory, args.compare, args))
+
+    if args.cycle is not None:
+        field = read_field(args.directory, args.group, args.comp, args.cycle, args.glob)
+        plot_field(field, args.comp, args.cycle, args.zindex, args.out_prefix,
+                   args.vmin, args.vmax)
+    else:
+        plot_range(args.directory, args)
+
+
+if __name__ == "__main__":
+    main()
